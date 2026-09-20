@@ -4,6 +4,7 @@ import {
   addRole,
   editOriginalInteractionResponse,
   env,
+  syncGuildStats,
   getBotUserId,
   getGuildChannels,
   getGuildMember,
@@ -121,6 +122,38 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // /stats — administrator-only manual refresh
+  if (
+    interaction.type === 2 &&
+    interaction.data?.name === "stats"
+  ) {
+    try {
+      const result = await syncGuildStats(guildId);
+      return json({
+        type: 4,
+        data: {
+          content: [
+            "📊 **CHITCHAT STATS UPDATED**",
+            "",
+            `👥 Members: **${result.memberCount}**`,
+            `🟢 Online: **${result.onlineCount ?? "N/A"}**`,
+            "",
+            "The live stats channels have been refreshed.",
+          ].join("\n"),
+          flags: 64,
+        },
+      });
+    } catch (error) {
+      return json({
+        type: 4,
+        data: {
+          content: `❌ Stats update failed.\\n\\n${error instanceof Error ? error.message : "Unknown error"}`,
+          flags: 64,
+        },
+      });
+    }
+  }
+
   // VERIFY button
   if (
     interaction.type === 3 &&
@@ -179,6 +212,9 @@ export async function POST(request: NextRequest) {
         if (!currentRoles.includes(verified.id)) {
           await addRole(guildId, userId, verified.id);
         }
+
+        // Refresh public server stats whenever a member completes verification.
+        await syncGuildStats(guildId).catch(() => {});
 
         await editOriginalInteractionResponse(applicationId, token, {
           content:"✅ **Verification successful!**\nYour CHITCHAT server access has been unlocked.",
