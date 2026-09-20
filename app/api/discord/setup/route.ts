@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
+import { getWorld } from "workflow/runtime";
 import {
   env,
   findChitchatGuildId,
@@ -11,6 +12,55 @@ import { discordStatsDaemon } from "@/workflows/discord-stats";
 import { chitchatAiDaemon } from "@/workflows/discord-ai";
 
 export const runtime = "nodejs";
+
+async function cancelActiveChitchatAiRuns() {
+  const world = await getWorld();
+  let cancelled = 0;
+
+  for (const status of ["pending", "running"] as const) {
+    let cursor: string | undefined;
+
+    do {
+      const page = await world.runs.list({
+        status,
+        pagination: {
+          limit: 100,
+          ...(cursor ? {cursor} : {}),
+        },
+        resolveData: "none",
+      });
+
+      for (const run of page.data) {
+        const workflowName = typeof run.workflowName === "string"
+          ? run.workflowName
+          : "";
+
+        if (
+          !workflowName.includes("chitchatAiDaemon") &&
+          !workflowName.includes("discord-ai")
+        ) {
+          continue;
+        }
+
+        try {
+          await world.events.create(run.runId, {
+            eventType: "run_cancelled",
+          });
+          cancelled += 1;
+        } catch (error) {
+          console.warn(
+            `[chitchat-ai] could not cancel stale run ${run.runId}:`,
+            error,
+          );
+        }
+      }
+
+      cursor = page.hasMore && page.cursor ? page.cursor : undefined;
+    } while (cursor);
+  }
+
+  return cancelled;
+}
 
 function setupPage(message = "", isError = false) {
   const safeMessage = message
@@ -124,9 +174,15 @@ async function registerWithSecret(suppliedSecret: string | null) {
 
     const guildId = await findChitchatGuildId();
 
+    // Hard-stop every previously running CHITCHAT AI daemon before creating
+    // the replacement. This targets the durable workflow runs themselves,
+    // so stale executions cannot keep replying after a redeploy/channel swap.
+    const cancelledAiRuns = await cancelActiveChitchatAiRuns();
+
     // Apply the latest Discord channel configuration immediately.
     // This also keeps the existing stats/welcome/verification behavior intact.
     const synced = await syncGuildStats(guildId);
+
     // Give this AI daemon a unique lease. The helper creates a fresh active
     // channel whenever the current channel was owned by an older daemon.
     const aiLeaseToken = crypto.randomUUID();
@@ -151,6 +207,7 @@ Application ID: ${env("DISCORD_CLIENT_ID")}
 Guild ID: ${guildId}
 AI Automation: ACTIVE
 AI Channel: ${aiChannel.name ?? "╌✦🤖ai-chat"}
+Stale AI Workflows Cancelled: ${cancelledAiRuns}
 Stats Workflow Run: ${statsRun.runId}
 AI Workflow Run: ${aiRun.runId}
 
