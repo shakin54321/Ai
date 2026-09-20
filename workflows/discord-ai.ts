@@ -174,16 +174,27 @@ export async function chitchatAiDaemon(
         lastSeenMessageId,
       )) as DiscordMessage[];
 
+      if (messages.length > 0) {
+        console.log(
+          `[chitchat-ai] detected ${messages.length} new message(s) in ${channel.id}`,
+        );
+      }
+
       for (const message of sortOldestFirst(messages)) {
         lastSeenMessageId = message.id;
 
         if (
           !message.author?.id ||
           message.author.id === botUserId ||
-          message.author.bot ||
-          typeof message.content !== 'string' ||
-          !message.content.trim()
+          message.author.bot
         ) {
+          continue;
+        }
+
+        if (typeof message.content !== 'string' || !message.content.trim()) {
+          console.warn(
+            '[chitchat-ai] message content is unavailable. Enable MESSAGE_CONTENT in Discord Developer Portal > Bot > Privileged Gateway Intents.',
+          );
           continue;
         }
 
@@ -210,8 +221,19 @@ export async function chitchatAiDaemon(
             answer,
           );
         } catch (error) {
-          const detail =
-            error instanceof Error ? error.message : 'Unknown AI error';
+          let detail = 'Unknown AI error';
+
+          if (error instanceof Error) {
+            detail = error.message;
+          } else if (typeof error === 'string') {
+            detail = error;
+          } else {
+            try {
+              detail = JSON.stringify(error);
+            } catch {
+              detail = 'Unknown AI error';
+            }
+          }
 
           console.error('[chitchat-ai] response failed:', detail);
 
