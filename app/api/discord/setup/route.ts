@@ -7,6 +7,7 @@ import {
   registerVerifyCommand,
   syncGuildStats,
 } from "@/lib/discord";
+import { discordStatsDaemon } from "@/workflows/discord-stats";
 import { chitchatAiDaemon } from "@/workflows/discord-ai";
 
 export const runtime = "nodejs";
@@ -132,7 +133,8 @@ async function registerWithSecret(suppliedSecret: string | null) {
       throw new Error("The ╌✦🤖ai-chat channel was not found. Create that channel before starting CHITCHAT AI.");
     }
 
-    const run = await start(chitchatAiDaemon, [guildId]);
+    const statsRun = await start(discordStatsDaemon, [guildId]);
+    const aiRun = await start(chitchatAiDaemon, [guildId]);
 
     const announcementStatus = synced.announcementChannelIds?.length
       ? `Announcement channels configured: ${synced.announcementChannelNames.join(", ")}`
@@ -146,7 +148,8 @@ Application ID: ${env("DISCORD_CLIENT_ID")}
 Guild ID: ${guildId}
 AI Automation: ACTIVE
 AI Channel: ${aiChannel.name ?? "╌✦🤖ai-chat"}
-AI Workflow Run: ${run.runId}
+Stats Workflow Run: ${statsRun.runId}
+AI Workflow Run: ${aiRun.runId}
 
 ${announcementStatus}
 Existing member count and online status automation remains active and continues syncing every 60 seconds.`,
