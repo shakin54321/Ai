@@ -189,12 +189,21 @@ export async function syncGuildStats(guildId: string) {
 export async function registerVerifyCommand() {
   const appId = env("DISCORD_CLIENT_ID");
   const token = env("DISCORD_BOT_TOKEN");
-  const body = {
-    name: "verify",
-    description: "Verify your account and unlock the CHITCHAT server.",
-    type: 1,
-    dm_permission: false,
-  };
+  const body = [
+    {
+      name: "verify",
+      description: "Verify your account and unlock the CHITCHAT server.",
+      type: 1,
+      dm_permission: false,
+    },
+    {
+      name: "stats",
+      description: "Refresh the CHITCHAT member and online stats.",
+      type: 1,
+      dm_permission: false,
+      default_member_permissions: "8",
+    },
+  ];
 
   const res = await fetch(`${DISCORD_API}/applications/${appId}/commands`, {
     method: "PUT",
@@ -202,7 +211,7 @@ export async function registerVerifyCommand() {
       Authorization: `Bot ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify([body]),
+    body: JSON.stringify(body),
     cache: "no-store",
   });
 
