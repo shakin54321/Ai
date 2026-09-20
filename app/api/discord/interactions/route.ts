@@ -43,6 +43,24 @@ function json(data: unknown, init?: ResponseInit) {
   return NextResponse.json(data, init);
 }
 
+function embed(
+  title: string,
+  description: string,
+  options: {
+    color?: number;
+    fields?: Array<{name: string; value: string; inline?: boolean}>;
+    footer?: string;
+  } = {},
+) {
+  return {
+    title,
+    description,
+    color: options.color ?? 0x8b5cf6,
+    fields: options.fields,
+    footer: options.footer ? {text: options.footer} : undefined,
+  };
+}
+
 export async function POST(request: NextRequest) {
   const signature = request.headers.get("x-signature-ed25519");
   const timestamp = request.headers.get("x-signature-timestamp");
@@ -74,7 +92,10 @@ export async function POST(request: NextRequest) {
   if (!guildId) {
     return json({
       type:4,
-      data:{content:"This command only works inside the CHITCHAT server.",flags:64},
+      data:{
+      embeds:[embed("CHITCHAT","This command is available only inside the CHITCHAT server.",{footer:"Server access required"})],
+      flags:64,
+    },
     });
   }
 
@@ -86,9 +107,14 @@ export async function POST(request: NextRequest) {
       return json({
         type: 4,
         data: {
-          content: process.env.DISCORD_OWNER_ID
-            ? "⛔ **Owner only.** This command can only be used by the bot owner."
-            : "⛔ **Owner access is not configured.** Set DISCORD_OWNER_ID in Vercel first.",
+          // Keep owner access enforced in code; this is only the presentation layer.
+          embeds:[embed(
+            "ACCESS RESTRICTED",
+            process.env.DISCORD_OWNER_ID
+              ? "This command is restricted to the bot owner.\\n\\nYour account is not authorized to run this command."
+              : "Owner access is not configured yet. Set DISCORD_OWNER_ID in Vercel before using management commands.",
+            {color:0xef4444, footer:"Owner-only command"},
+          )],
           flags: 64,
         },
       });
@@ -110,7 +136,11 @@ export async function POST(request: NextRequest) {
         return json({
           type:4,
           data:{
-            content:"Please use **#VERIFY-HERE** to verify your account.",
+            embeds:[embed(
+              "USE THE VERIFICATION CHANNEL",
+              "Please use the #VERIFY-HERE channel to start verification.",
+              {color:0xf59e0b, footer:"Verification channel required"},
+            )],
             flags:64,
           },
         });
@@ -144,7 +174,11 @@ export async function POST(request: NextRequest) {
       return json({
         type:4,
         data:{
-          content:`Verification setup error: ${error instanceof Error ? error.message : "Unknown error"}`,
+          embeds:[embed(
+            "VERIFICATION SETUP ERROR",
+            error instanceof Error ? error.message : "Unknown error",
+            {color:0xef4444, footer:"Please contact the server owner"},
+          )],
           flags:64,
         },
       });
@@ -176,7 +210,11 @@ export async function POST(request: NextRequest) {
       return json({
         type: 4,
         data: {
-          content: `❌ Stats update failed.\\n\\n${error instanceof Error ? error.message : "Unknown error"}`,
+          embeds:[embed(
+            "STATS UPDATE FAILED",
+            error instanceof Error ? error.message : "Unknown error",
+            {color:0xef4444, footer:"No server settings were changed"},
+          )],
           flags: 64,
         },
       });
@@ -194,7 +232,10 @@ export async function POST(request: NextRequest) {
     if (!userId) {
       return json({
         type:4,
-        data:{content:"Could not identify your Discord account.",flags:64},
+        data:{
+          embeds:[embed("ACCOUNT NOT FOUND","Discord did not provide enough information to identify your account.",{color:0xef4444})],
+          flags:64,
+        },
       });
     }
 
@@ -202,7 +243,7 @@ export async function POST(request: NextRequest) {
     const response = json({
       type:4,
       data:{
-        content:"⏳ **Verification processing...**\nPlease wait a few seconds.",
+        embeds:[embed("VERIFICATION IN PROGRESS","Your verification request has been received. Please wait a few seconds.",{color:0x3b82f6, footer:"CHITCHAT verification"})],
         flags:64,
       },
     });
@@ -246,7 +287,7 @@ export async function POST(request: NextRequest) {
         await syncGuildStats(guildId).catch(() => {});
 
         await editOriginalInteractionResponse(applicationId, token, {
-          content:"✅ **Verification successful!**\nYour CHITCHAT server access has been unlocked.",
+          embeds:[embed("VERIFICATION COMPLETE","Your account has been verified and CHITCHAT server access is now unlocked.",{color:0x22c55e, footer:"Welcome to CHITCHAT"})],
           components:[],
         });
       };
@@ -257,7 +298,7 @@ export async function POST(request: NextRequest) {
         await finish();
       } catch (error) {
         await editOriginalInteractionResponse(applicationId, token, {
-          content:`❌ Verification could not be completed.\n\n${error instanceof Error ? error.message : "Unknown error"}`,
+          embeds:[embed("VERIFICATION FAILED",error instanceof Error ? error.message : "Unknown error",{color:0xef4444, footer:"No role changes were completed after this failure"})],
           components:[],
         }).catch(() => {});
       }
@@ -268,6 +309,9 @@ export async function POST(request: NextRequest) {
 
   return json({
     type:4,
-    data:{content:"Unknown command.",flags:64},
+    data:{
+      embeds:[embed("COMMAND NOT FOUND","The requested command is not available.",{color:0xef4444})],
+      flags:64,
+    },
   });
 }
