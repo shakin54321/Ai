@@ -152,7 +152,7 @@ function setupPage(message = "", isError = false) {
 <body>
   <main class="card">
     <h1>CHITCHAT AI Setup</h1>
-    <p>Enter your private setup secret to register <code>/verify</code>, <code>/stats</code>, <code>/ai</code>, the donation <code>Approved</code> message action, and start CHITCHAT AI automation.</p>
+    <p>Enter your private setup secret to register <code>/verify</code>, <code>/stats</code>, <code>/ai</code>, <code>/mute</code>, the donation <code>Approved</code> message action, and start CHITCHAT AI automation.</p>
     <form method="post">
       <input
         name="key"
@@ -223,9 +223,9 @@ async function registerWithSecret(suppliedSecret: string | null) {
     const aiRun = await start(chitchatAiDaemon, [aiChannel.id, aiLeaseToken]);
 
     return setupPage(
-      `Success. /verify, /stats, /ai, and Approved were registered.
+      `Success. /verify, /stats, /ai, /mute, and Approved were registered.
 
-Registered commands: ${commandNames || "/verify, /stats, /ai"}
+Registered commands: ${commandNames || "/verify, /stats, /ai, /mute"}
 Application ID: ${env("DISCORD_CLIENT_ID")}
 Guild ID: ${guildId}
 AI Automation: ACTIVE
