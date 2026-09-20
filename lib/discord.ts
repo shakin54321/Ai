@@ -51,9 +51,39 @@ async function discordFetch(path: string, init: RequestInit = {}) {
 }
 
 export async function getGuildChannels(guildId: string): Promise<Array<{id:string;name?:string;type:number;topic?:string|null;position?:number;parent_id?:string|null;rate_limit_per_user?:number;nsfw?:boolean;permission_overwrites?:Array<{id:string;type:0|1;allow:string;deny:string}>}>> {
-  const res = await discordFetch(`/guilds/${guildId}/channels`);
-  if (!res.ok) throw new Error(`Discord channels lookup failed: ${res.status}`);
-  return res.json();
+  // Discord may temporarily rate-limit the bot after a burst of workflow/API
+  // activity. Respect a short Retry-After window here so setup and automation
+  // can recover instead of failing immediately with a bare 429.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const res = await discordFetch(`/guilds/${guildId}/channels`);
+    if (res.ok) {
+      return res.json();
+    }
+
+    if (res.status !== 429 || attempt === 2) {
+      throw new Error(`Discord channels lookup failed: ${res.status}`);
+    }
+
+    const detail = await res.text().catch(() => "");
+    let retryAfter = Number.parseFloat(res.headers.get("retry-after") ?? "");
+    if (!Number.isFinite(retryAfter)) {
+      try {
+        const parsed = JSON.parse(detail);
+        retryAfter =
+          typeof parsed?.retry_after === "number" ? parsed.retry_after : 2;
+      } catch {
+        retryAfter = 2;
+      }
+    }
+
+    const delayMs = Math.min(
+      8000,
+      Math.max(500, Math.ceil(retryAfter * 1000)),
+    );
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  throw new Error("Discord channels lookup failed: 429");
 }
 
 export async function getGuildRoles(guildId: string): Promise<Array<{id:string;name:string;position:number;managed:boolean;mentionable?:boolean}>> {
