@@ -15,7 +15,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tweetnacl": "^1.0.3",
-    "discord.js": "^14.22.1"
+    "discord.js": "^14.22.1",
+    "workflow": "^4.2.5"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
