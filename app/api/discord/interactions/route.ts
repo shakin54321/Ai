@@ -100,11 +100,30 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // /ai is available to every member in every channel.
+  // /ai is owner-only. The dedicated ai-chat channel remains public;
+  // normal messages there are handled by the separate AI daemon.
   if (
     interaction.type === 2 &&
     interaction.data?.name === "ai"
   ) {
+    if (!isOwner(interaction)) {
+      return json({
+        type: 4,
+        data: {
+          embeds: [
+            embed(
+              "ACCESS RESTRICTED",
+              process.env.DISCORD_OWNER_ID
+                ? "The /ai command is restricted to the bot owner."
+                : "Owner access is not configured yet. Set DISCORD_OWNER_ID in Vercel before using /ai.",
+              {color: 0xef4444, footer: "Owner-only command"},
+            ),
+          ],
+          flags: 64,
+        },
+      });
+    }
+
     const promptOption = Array.isArray(interaction.data?.options)
       ? interaction.data.options.find(
           (option: any) => option?.name === "prompt" && option?.type === 3,
