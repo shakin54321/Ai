@@ -1,6 +1,7 @@
 import nacl from "tweetnacl";
 
 const DISCORD_API = "https://discord.com/api/v10";
+const SEND_MESSAGES_PERMISSION = 1n << 11n;
 
 export function env(name: string): string {
   const value = process.env[name];
@@ -93,7 +94,6 @@ export async function removeRole(guildId: string, userId: string, roleId: string
   }
 }
 
-
 export async function getBotGuilds() {
   const res = await discordFetch("/users/@me/guilds?limit=200");
   if (!res.ok) throw new Error(`Discord bot guild lookup failed: ${res.status}`);
@@ -132,6 +132,26 @@ export async function modifyChannel(
   return res.json();
 }
 
+export async function modifyChannelPermission(
+  channelId: string,
+  overwriteId: string,
+  data: {allow: string; deny: string; type: 0 | 1},
+) {
+  const res = await discordFetch(
+    `/channels/${channelId}/permissions/${overwriteId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `Discord channel permission update failed: ${res.status} ${detail}`,
+    );
+  }
+}
+
 export async function modifyGuild(
   guildId: string,
   data: Record<string, unknown>,
@@ -166,6 +186,43 @@ function isWelcomeChannel(name?: string) {
   return normalized.includes("WELCOME");
 }
 
+function isAnnouncementChannel(name?: string) {
+  const normalized = normalizeChannelName(name);
+  return normalized === "ANNOUNCEMENT" || normalized === "SABANNOUNCEMENT";
+}
+
+async function configureAnnouncementChannel(
+  guildId: string,
+  channelId: string,
+) {
+  const ownerId = process.env.DISCORD_OWNER_ID?.trim();
+  const botUserId = await getBotUserId();
+
+  // Type 5 is Discord's News/Announcement channel type.
+  await modifyChannel(channelId, {type: 5});
+
+  // Nobody can post by default; the bot and server owner remain able to post.
+  await modifyChannelPermission(channelId, guildId, {
+    allow: "0",
+    deny: SEND_MESSAGES_PERMISSION.toString(),
+    type: 0,
+  });
+
+  await modifyChannelPermission(channelId, botUserId, {
+    allow: SEND_MESSAGES_PERMISSION.toString(),
+    deny: "0",
+    type: 1,
+  });
+
+  if (ownerId) {
+    await modifyChannelPermission(channelId, ownerId, {
+      allow: SEND_MESSAGES_PERMISSION.toString(),
+      deny: "0",
+      type: 1,
+    });
+  }
+}
+
 export async function syncGuildStats(guildId: string) {
   const guild = await getGuildWithCounts(guildId);
   const memberCount =
@@ -190,6 +247,9 @@ export async function syncGuildStats(guildId: string) {
   );
   const welcomeChannel = channels.find((channel) =>
     isWelcomeChannel(channel.name),
+  );
+  const announcementChannels = channels.filter((channel) =>
+    isAnnouncementChannel(channel.name),
   );
 
   if (!membersChannel) {
@@ -239,6 +299,21 @@ export async function syncGuildStats(guildId: string) {
     }
   }
 
+  // Turn both requested announcement channels into News channels so Discord
+  // exposes its native "Follow" option, and lock posting to the owner/bot.
+  if (announcementChannels.length) {
+    updates.push(
+      ...announcementChannels.map((channel) =>
+        configureAnnouncementChannel(guildId, channel.id).catch((error) => {
+          console.warn(
+            `[discord-announcement] could not configure ${channel.name}:`,
+            error,
+          );
+        }),
+      ),
+    );
+  }
+
   await Promise.all(updates);
 
   return {
@@ -248,9 +323,11 @@ export async function syncGuildStats(guildId: string) {
     membersChannelId: membersChannel.id,
     statusChannelId: statusChannel?.id ?? null,
     welcomeChannelId: welcomeChannel?.id ?? null,
+    announcementChannelIds: announcementChannels.map((channel) => channel.id),
     membersChannelName: nextMemberName,
     statusChannelName: statusChannel?.name ?? null,
     welcomeChannelName: welcomeChannel?.name ?? null,
+    announcementChannelNames: announcementChannels.map((channel) => channel.name ?? ""),
   };
 }
 
