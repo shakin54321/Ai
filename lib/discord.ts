@@ -329,29 +329,11 @@ export async function ensureChitchatAiChatChannel(
     type: 1,
   });
 
-  // Fence every other AI-related channel so stale workflow instances cannot
-  // read or write there. The active channel alone keeps the AI lease.
-  let disabledIndex = 1;
+  // Keep exactly one active AI channel. Delete every older AI/legacy channel
+  // so repeated setup runs cannot leave a trail of disabled duplicates.
   for (const channel of snowflakeSortOldestFirst(aiChannels)) {
     if (channel.id === active.id) continue;
-
-    const disabledName =
-      disabledIndex === 1
-        ? AI_DISABLED_CHANNEL_NAME
-        : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
-
-    await modifyChannel(channel.id, {
-      name: disabledName,
-      topic: "CHITCHAT_AI_DISABLED",
-    });
-
-    await modifyChannelPermission(channel.id, botUserId, {
-      allow: "0",
-      deny: botChannelPermissions.toString(),
-      type: 1,
-    });
-
-    disabledIndex += 1;
+    await deleteDiscordChannel(channel.id);
   }
 
   await modifyChannel(active.id, {
@@ -451,6 +433,15 @@ export async function getGuildWithCounts(guildId: string) {
   return res.json();
 }
 
+export async function deleteDiscordChannel(channelId: string) {
+  const res = await discordFetch("/channels/" + channelId, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) {
+    const detail = await res.text().catch(() => "");
+    throw new Error("Discord channel delete failed: " + res.status + " " + detail);
+  }
+}
 export async function modifyChannel(
   channelId: string,
   data: Record<string, unknown>,
