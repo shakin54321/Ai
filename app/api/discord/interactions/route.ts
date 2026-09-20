@@ -23,8 +23,8 @@ function isVerifyChannelName(name?: string) {
   const normalized = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
   return normalized === "VERIFYHERE";
 }
-const UNVERIFIED_ROLE_NAME = "🔒 UNVERIFIED";
-const VERIFIED_ROLE_NAME = "✅ VERIFIED";
+const UNVERIFIED_ROLE_NAME = "─.✦ 𐔌 ﾟ.✧ Newbie ✮⋆˙";
+const VERIFIED_ROLE_NAME = "─.✦ 𐔌 ﾟ.✧ Members ✮⋆˙";
 const VERIFY_BUTTON_ID = "chitchat:verify";
 
 function getInteractionUserId(interaction: any): string | null {
@@ -345,11 +345,11 @@ export async function POST(request: NextRequest) {
         );
 
         if (verified.position >= botTopRolePosition) {
-          throw new Error("The bot's highest role is not above ✅ VERIFIED. Move the bot role above the verification roles.");
+          throw new Error("The bot's highest role is not above the Members role. Move the bot role above the verification roles.");
         }
 
         if (unverified && unverified.position >= botTopRolePosition) {
-          throw new Error("The bot's highest role is not above 🔒 UNVERIFIED. Move the bot role above the verification roles.");
+          throw new Error("The bot's highest role is not above the Newbie role. Move the bot role above the verification roles.");
         }
 
         const currentMember = await getGuildMember(guildId, userId);
