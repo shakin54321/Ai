@@ -43,47 +43,41 @@ async function discordFetch(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bot ${token}`);
   headers.set("Content-Type", "application/json");
-  return fetch(`${DISCORD_API}${path}`, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
-}
 
-export async function getGuildChannels(guildId: string): Promise<Array<{id:string;name?:string;type:number;topic?:string|null;position?:number;parent_id?:string|null;rate_limit_per_user?:number;nsfw?:boolean;permission_overwrites?:Array<{id:string;type:0|1;allow:string;deny:string}>}>> {
-  // Discord may temporarily rate-limit the bot after a burst of workflow/API
-  // activity. Respect a short Retry-After window here so setup and automation
-  // can recover instead of failing immediately with a bare 429.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const res = await discordFetch(`/guilds/${guildId}/channels`);
-    if (res.ok) {
-      return res.json();
-    }
+    const res = await fetch(`${DISCORD_API}${path}`, {
+      ...init,
+      headers,
+      cache: "no-store",
+    });
 
     if (res.status !== 429 || attempt === 2) {
-      throw new Error(`Discord channels lookup failed: ${res.status}`);
+      return res;
     }
 
-    const detail = await res.text().catch(() => "");
-    let retryAfter = Number.parseFloat(res.headers.get("retry-after") ?? "");
-    if (!Number.isFinite(retryAfter)) {
+    let retryAfterMs = Number(res.headers.get("Retry-After")) * 1000;
+    if (!Number.isFinite(retryAfterMs) || retryAfterMs <= 0) {
       try {
-        const parsed = JSON.parse(detail);
-        retryAfter =
-          typeof parsed?.retry_after === "number" ? parsed.retry_after : 2;
+        const body = await res.clone().json() as {retry_after?: number};
+        if (typeof body.retry_after === "number") {
+          retryAfterMs = body.retry_after * 1000;
+        }
       } catch {
-        retryAfter = 2;
+        retryAfterMs = 5000;
       }
     }
 
-    const delayMs = Math.min(
-      8000,
-      Math.max(500, Math.ceil(retryAfter * 1000)),
-    );
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    retryAfterMs = Math.min(60000, Math.max(1000, Math.ceil(retryAfterMs || 5000)));
+    await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
   }
 
-  throw new Error("Discord channels lookup failed: 429");
+  throw new Error(`Discord request failed after rate-limit retries: ${path}`);
+}
+
+export async function getGuildChannels(guildId: string): Promise<Array<{id:string;name?:string;type:number;topic?:string|null;position?:number;parent_id?:string|null;rate_limit_per_user?:number;nsfw?:boolean;permission_overwrites?:Array<{id:string;type:0|1;allow:string;deny:string}>}>> {
+  const res = await discordFetch(`/guilds/${guildId}/channels`);
+  if (!res.ok) throw new Error(`Discord channels lookup failed: ${res.status}`);
+  return res.json();
 }
 
 export async function getGuildRoles(guildId: string): Promise<Array<{id:string;name:string;position:number;managed:boolean;mentionable?:boolean}>> {
@@ -177,6 +171,7 @@ export async function getDiscordChannelMessages(
 const AI_CHAT_CHANNEL_NAME = "╌✦🤖ai-chat";
 const AI_DISABLED_CHANNEL_NAME = "╌✦🤖ai-disabled-legacy";
 export const CHITCHAT_AI_LEASE_PREFIX = "CHITCHAT_AI_LEASE:";
+export const CHITCHAT_STATS_LEASE_PREFIX = "CHITCHAT_STATS_LEASE:";
 
 function snowflakeSortOldestFirst<T extends {id: string}>(items: T[]) {
   return [...items].sort((a, b) => {
@@ -567,7 +562,7 @@ async function configureAnnouncementChannel(
   }
 }
 
-export async function syncGuildStats(guildId: string) {
+export async function syncGuildStats(guildId: string, statsLeaseToken?: string) {
   const guild = await getGuildWithCounts(guildId);
   const memberCount =
     typeof guild.approximate_member_count === "number"
@@ -614,7 +609,7 @@ export async function syncGuildStats(guildId: string) {
   const memberName = membersChannel.name ?? "members-000";
   const nextMemberName = memberName.replace(/\d+$/u, String(memberCount));
 
-  const updates: Promise<unknown>[] = [];
+  const updates: Array<() => Promise<unknown>> = [];
 
   const roles = await getGuildRoles(guildId);
   for (const role of roles) {
@@ -626,24 +621,37 @@ export async function syncGuildStats(guildId: string) {
       continue;
     }
 
-    updates.push(
-      modifyRole(guildId, role.id, {mentionable: false}).catch((error) => {
+    updates.push(async () => {
+      try {
+        await modifyRole(guildId, role.id, {mentionable: false});
+      } catch (error) {
         console.warn(
           `[discord-roles] could not protect role ${role.name} from mentions:`,
           error,
         );
-      }),
-    );
+      }
+    });
   }
   if (nextMemberName !== memberName) {
-    updates.push(modifyChannel(membersChannel.id, {name: nextMemberName}));
+    updates.push(() => modifyChannel(membersChannel.id, {name: nextMemberName}));
   }
 
   // Keep the status channel's requested online indicator intact.
   if (statusChannel && !statusChannel.name?.includes("🟢")) {
-    updates.push(
+    updates.push(() =>
       modifyChannel(statusChannel.id, {
         name: `${statusChannel.name}🟢`,
+      }),
+    );
+  }
+
+  if (
+    statsLeaseToken &&
+    (membersChannel.topic ?? "") !== `${CHITCHAT_STATS_LEASE_PREFIX}${statsLeaseToken}`
+  ) {
+    updates.push(() =>
+      modifyChannel(membersChannel.id, {
+        topic: `${CHITCHAT_STATS_LEASE_PREFIX}${statsLeaseToken}`,
       }),
     );
   }
@@ -660,38 +668,42 @@ export async function syncGuildStats(guildId: string) {
       guild.system_channel_id !== welcomeChannel.id ||
       joinMessagesSuppressed
     ) {
-      updates.push(
-        modifyGuild(guildId, {
-          system_channel_id: welcomeChannel.id,
-          system_channel_flags: currentFlags & ~1,
-        }).catch((error) => {
+      updates.push(async () => {
+        try {
+          await modifyGuild(guildId, {
+            system_channel_id: welcomeChannel.id,
+            system_channel_flags: currentFlags & ~1,
+          });
+        } catch (error) {
           console.warn(
             "[discord-welcome] could not configure Discord system welcome channel:",
             error,
           );
-        }),
-      );
+        }
+      });
     }
   }
 
   // Turn both requested announcement channels into News channels so Discord
   // exposes its native "Follow" option, and lock posting to the owner/bot.
   if (announcementChannels.length) {
-    updates.push(
-      ...announcementChannels
-        .filter((channel) => channel.type !== 5)
-        .map((channel) =>
-          configureAnnouncementChannel(guildId, channel.id).catch((error) => {
-            console.warn(
-              `[discord-announcement] could not configure ${channel.name}:`,
-              error,
-            );
-          }),
-        ),
-    );
+    for (const channel of announcementChannels.filter((item) => item.type !== 5)) {
+      updates.push(async () => {
+        try {
+          await configureAnnouncementChannel(guildId, channel.id);
+        } catch (error) {
+          console.warn(
+            `[discord-announcement] could not configure ${channel.name}:`,
+            error,
+          );
+        }
+      });
+    }
   }
 
-  await Promise.all(updates);
+  for (const update of updates) {
+    await update();
+  }
 
   return {
     guildId,
@@ -747,14 +759,9 @@ export async function registerVerifyCommand() {
     },
   ];
 
-  const res = await fetch(`${DISCORD_API}/applications/${appId}/commands`, {
+  const res = await discordFetch(`/applications/${appId}/commands`, {
     method: "PUT",
-    headers: {
-      Authorization: `Bot ${token}`,
-      "Content-Type": "application/json",
-    },
     body: JSON.stringify(body),
-    cache: "no-store",
   });
 
   if (!res.ok) {
