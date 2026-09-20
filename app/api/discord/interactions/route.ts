@@ -27,6 +27,18 @@ const UNVERIFIED_ROLE_NAME = "🔒 UNVERIFIED";
 const VERIFIED_ROLE_NAME = "✅ VERIFIED";
 const VERIFY_BUTTON_ID = "chitchat:verify";
 
+const PUBLIC_COMMANDS = new Set(["verify"]);
+
+function getInteractionUserId(interaction: any): string | null {
+  return interaction.member?.user?.id ?? interaction.user?.id ?? null;
+}
+
+function isOwner(interaction: any): boolean {
+  const ownerId = process.env.DISCORD_OWNER_ID?.trim();
+  const userId = getInteractionUserId(interaction);
+  return Boolean(ownerId && userId && userId === ownerId);
+}
+
 function json(data: unknown, init?: ResponseInit) {
   return NextResponse.json(data, init);
 }
@@ -64,6 +76,23 @@ export async function POST(request: NextRequest) {
       type:4,
       data:{content:"This command only works inside the CHITCHAT server.",flags:64},
     });
+  }
+
+  // All slash commands are owner-only except /verify.
+  // This is enforced in code so Administrator permissions alone do not grant access.
+  if (interaction.type === 2) {
+    const commandName = interaction.data?.name;
+    if (!PUBLIC_COMMANDS.has(commandName) && !isOwner(interaction)) {
+      return json({
+        type: 4,
+        data: {
+          content: process.env.DISCORD_OWNER_ID
+            ? "⛔ **Owner only.** This command can only be used by the bot owner."
+            : "⛔ **Owner access is not configured.** Set DISCORD_OWNER_ID in Vercel first.",
+          flags: 64,
+        },
+      });
+    }
   }
 
   // /verify
