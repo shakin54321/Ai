@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "discord:worker": "node worker/discord-gateway.js"
   },
   "dependencies": {
     "ai": "^6.0.34",
@@ -13,7 +14,8 @@
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "discord.js": "^14.22.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
