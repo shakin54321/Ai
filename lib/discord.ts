@@ -99,6 +99,46 @@ export async function getGuildMember(guildId: string, userId: string) {
   return res.json();
 }
 
+export async function timeoutGuildMember(
+  guildId: string,
+  userId: string,
+  durationSeconds: number,
+  reason: string,
+) {
+  const minDuration = 60;
+  const maxDuration = 28 * 24 * 60 * 60;
+
+  if (!Number.isInteger(durationSeconds) || durationSeconds < minDuration || durationSeconds > maxDuration) {
+    throw new Error("Mute duration must be between 1 minute and 28 days.");
+  }
+
+  const communicationDisabledUntil = new Date(
+    Date.now() + durationSeconds * 1000,
+  ).toISOString();
+
+  const auditReason = reason.trim().slice(0, 512);
+
+  const res = await discordFetch(`/guilds/${guildId}/members/${userId}`, {
+    method: "PATCH",
+    headers: auditReason
+      ? {"X-Audit-Log-Reason": encodeURIComponent(auditReason)}
+      : undefined,
+    body: JSON.stringify({
+      communication_disabled_until: communicationDisabledUntil,
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord mute failed: ${res.status} ${detail}`);
+  }
+
+  return {
+    userId,
+    communicationDisabledUntil,
+  };
+}
+
 export async function addRole(guildId: string, userId: string, roleId: string) {
   const res = await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
     method: "PUT",
