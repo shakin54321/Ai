@@ -158,55 +158,93 @@ const AI_CHAT_LEGACY_NAME = "╌✦🤖ai-archive-legacy";
 
 export async function rotateChitchatAiChatChannel(guildId: string) {
   const channels = await getGuildChannels(guildId);
-  const active = channels.find(
+  const candidates = channels.filter((channel) => {
+    const normalized = normalizeChannelName(channel.name);
+    return normalized === "AICHAT" || normalized.startsWith("AIARCHIVELEGACY");
+  });
+
+  const template = candidates.find(
     (channel) => normalizeChannelName(channel.name) === "AICHAT",
-  );
-  if (!active) {
-    throw new Error("The ╌✦🤖ai-chat channel was not found in CHITCHAT.");
+  ) ?? candidates[0];
+
+  const renamedLegacyIds = new Set<string>();
+  let legacyIndex = 1;
+
+  // Move every channel that could belong to an older AI daemon out of the
+  // active name. Existing long-running workflows keep their old channel IDs,
+  // so this cleanly fences them away from the fresh channel below.
+  for (const channel of candidates) {
+    const legacyName =
+      legacyIndex === 1
+        ? AI_CHAT_LEGACY_NAME
+        : `${AI_CHAT_LEGACY_NAME}-${legacyIndex}`;
+
+    await modifyChannel(channel.id, {name: legacyName});
+    renamedLegacyIds.add(channel.id);
+    legacyIndex += 1;
   }
 
-  const currentRes = await discordFetch(`/channels/${active.id}`);
-  if (!currentRes.ok) {
-    const detail = await currentRes.text().catch(() => "");
-    throw new Error(`Discord AI channel lookup failed: ${currentRes.status} ${detail}`);
-  }
+  if (template) {
+    const currentRes = await discordFetch(`/channels/${template.id}`);
+    if (!currentRes.ok) {
+      const detail = await currentRes.text().catch(() => "");
+      throw new Error(`Discord AI channel lookup failed: ${currentRes.status} ${detail}`);
+    }
 
-  const current = await currentRes.json() as {
-    name?: string;
-    type?: number;
-    parent_id?: string | null;
-    position?: number;
-    topic?: string | null;
-    rate_limit_per_user?: number;
-    nsfw?: boolean;
-    permission_overwrites?: Array<{
+    const current = await currentRes.json() as {
+      type?: number;
+      parent_id?: string | null;
+      position?: number;
+      topic?: string | null;
+      rate_limit_per_user?: number;
+      nsfw?: boolean;
+      permission_overwrites?: Array<{
+        id: string;
+        type: 0 | 1;
+        allow: string;
+        deny: string;
+      }>;
+    };
+
+    const createRes = await discordFetch(`/guilds/${guildId}/channels`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "╌✦🤖ai-chat",
+        type: current.type ?? 0,
+        position: current.position,
+        parent_id: current.parent_id ?? undefined,
+        topic: current.topic ?? undefined,
+        rate_limit_per_user: current.rate_limit_per_user ?? undefined,
+        nsfw: current.nsfw ?? undefined,
+        permission_overwrites: current.permission_overwrites ?? [],
+      }),
+    });
+
+    if (!createRes.ok) {
+      const detail = await createRes.text().catch(() => "");
+      throw new Error(`Discord AI channel recreation failed: ${createRes.status} ${detail}`);
+    }
+
+    return await createRes.json() as {
       id: string;
-      type: 0 | 1;
-      allow: string;
-      deny: string;
-    }>;
-  };
+      name?: string;
+      type: number;
+    };
+  }
 
-  await modifyChannel(active.id, {name: AI_CHAT_LEGACY_NAME});
-
+  // If no previous AI channel exists, create the requested channel from
+  // scratch. This is also safe for a brand-new CHITCHAT server.
   const createRes = await discordFetch(`/guilds/${guildId}/channels`, {
     method: "POST",
     body: JSON.stringify({
-      name: current.name ?? "╌✦🤖ai-chat",
-      type: current.type ?? 0,
-      position: current.position,
-      parent_id: current.parent_id ?? undefined,
-      topic: current.topic ?? undefined,
-      rate_limit_per_user: current.rate_limit_per_user ?? undefined,
-      nsfw: current.nsfw ?? undefined,
-      permission_overwrites: current.permission_overwrites ?? [],
+      name: "╌✦🤖ai-chat",
+      type: 0,
     }),
   });
 
   if (!createRes.ok) {
     const detail = await createRes.text().catch(() => "");
-    await modifyChannel(active.id, {name: "╌✦🤖ai-chat"}).catch(() => {});
-    throw new Error(`Discord AI channel recreation failed: ${createRes.status} ${detail}`);
+    throw new Error(`Discord AI channel creation failed: ${createRes.status} ${detail}`);
   }
 
   return await createRes.json() as {
