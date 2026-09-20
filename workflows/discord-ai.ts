@@ -191,29 +191,19 @@ export async function chitchatAiDaemon(
           continue;
         }
 
-        // No MESSAGE_CONTENT privileged intent is required for messages that
-        // explicitly mention the app. Discord exposes the content for those
-        // messages, so this is the privacy-safe trigger for CHITCHAT AI.
-        const content = typeof message.content === 'string'
-          ? message.content.trim()
-          : '';
+        // The AI channel is intentionally a dedicated chat channel, so every
+        // normal human text message is an AI prompt. Discord's REST message
+        // history endpoint provides the content without requiring the
+        // privileged MESSAGE_CONTENT Gateway intent.
+        const content =
+          typeof message.content === 'string' ? message.content.trim() : '';
 
         if (!content) {
           continue;
         }
 
-        const mentionForms = [
-          `<@${botUserId}>`,
-          `<@!${botUserId}>`,
-        ];
-        const isBotMentioned = mentionForms.some((mention) =>
-          content.includes(mention),
-        );
-
-        if (!isBotMentioned) {
-          continue;
-        }
-
+        // Keep mention-based prompts working too, while also supporting plain
+        // messages such as "Hi" or "help me" with no bot mention.
         const prompt = content
           .replaceAll(`<@${botUserId}>`, '')
           .replaceAll(`<@!${botUserId}>`, '')
@@ -224,7 +214,7 @@ export async function chitchatAiDaemon(
             channel.id,
             message.id,
             message.author.id,
-            'Hi! Mention me and add your question, for example: @CHITCHAT AI What can you help me with?',
+            'Hi! Send me your question or message here and I will help you.',
           ).catch(() => {});
           continue;
         }
