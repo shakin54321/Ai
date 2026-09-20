@@ -6,6 +6,7 @@ import {
   editDiscordChannelMessage,
   env,
   syncGuildStats,
+  timeoutGuildMember,
   getBotUserId,
   getDiscordChannelMessage,
   getGuildChannels,
@@ -260,6 +261,70 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // /mute — owner-only member timeout.
+  if (interaction.type === 2 && interaction.data?.name === "mute") {
+    const options = Array.isArray(interaction.data?.options) ? interaction.data.options : [];
+
+    const userOption = options.find((option: any) => option?.name === "user" && option?.type === 6);
+    const timeOption = options.find((option: any) => option?.name === "time" && option?.type === 3);
+    const reasonOption = options.find((option: any) => option?.name === "reason" && option?.type === 3);
+
+    const targetUserId = typeof userOption?.value === "string" ? userOption.value : "";
+    const timeValue = typeof timeOption?.value === "string" ? timeOption.value : "";
+    const reason = typeof reasonOption?.value === "string" && reasonOption.value.trim()
+      ? reasonOption.value.trim()
+      : "Muted for breaking rules";
+
+    const muteDurations: Record<string, {label: string; seconds: number}> = {
+      "1m": {label: "1 minute", seconds: 60},
+      "5m": {label: "5 minutes", seconds: 5 * 60},
+      "10m": {label: "10 minutes", seconds: 10 * 60},
+      "30m": {label: "30 minutes", seconds: 30 * 60},
+      "1h": {label: "1 hour", seconds: 60 * 60},
+      "6h": {label: "6 hours", seconds: 6 * 60 * 60},
+      "12h": {label: "12 hours", seconds: 12 * 60 * 60},
+      "1d": {label: "1 day", seconds: 24 * 60 * 60},
+      "7d": {label: "7 days", seconds: 7 * 24 * 60 * 60},
+      "28d": {label: "28 days", seconds: 28 * 24 * 60 * 60},
+    };
+
+    const duration = muteDurations[timeValue];
+
+    if (!targetUserId || !duration) {
+      return json({
+        type: 4,
+        data: {
+          embeds: [embed("MUTE FAILED", "Select a server member and a valid mute duration.", {color: 0xef4444, footer: "CHITCHAT • Moderation"})],
+          flags: 64,
+        },
+      });
+    }
+
+    try {
+      await getGuildMember(guildId, targetUserId);
+      await timeoutGuildMember(guildId, targetUserId, duration.seconds, reason);
+
+      return json({
+        type: 4,
+        data: {
+          embeds: [embed("MEMBER MUTED", "<@" + targetUserId + "> has been muted for **" + duration.label + "**.\n\nReason: " + reason, {color: 0xa855f7, footer: "CHITCHAT • Moderation"})],
+          allowed_mentions: {users: []},
+        },
+      });
+    } catch (error) {
+      return json({
+        type: 4,
+        data: {
+          embeds: [embed(
+            "MUTE FAILED",
+            (error instanceof Error ? error.message : "The member could not be muted.") + "\n\nMake sure the bot has the **Timeout Members** permission and its highest role is above the target member's highest role.",
+            {color: 0xef4444, footer: "CHITCHAT • Moderation"},
+          )],
+          flags: 64,
+        },
+      });
+    }
+  }
   // Message context command: Apps → Approved
   if (
     interaction.type === 2 &&
