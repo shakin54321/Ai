@@ -181,9 +181,10 @@ async function registerWithSecret(suppliedSecret: string | null) {
     // so stale executions cannot keep replying after a redeploy/channel swap.
     const cancelledRuns = await cancelActiveChitchatRuns();
 
-    // Apply the latest Discord channel configuration immediately.
-    // This also keeps the existing stats/welcome/verification behavior intact.
-    const synced = await syncGuildStats(guildId);
+    // Do not run the full stats sync inline here. Setup should only perform
+    // the channel preparation needed to start automation; the stats daemon
+    // performs the first sync after it starts. This avoids an unnecessary
+    // Discord channel-list request during registration.
 
     // Give this AI daemon a unique lease. The helper creates a fresh active
     // channel whenever the current channel was owned by an older daemon.
@@ -197,10 +198,6 @@ async function registerWithSecret(suppliedSecret: string | null) {
     const statsRun = await start(discordStatsDaemon, [guildId]);
     const aiRun = await start(chitchatAiDaemon, [aiChannel.id, aiLeaseToken]);
 
-    const announcementStatus = synced.announcementChannelIds?.length
-      ? `Announcement channels configured: ${synced.announcementChannelNames.join(", ")}`
-      : "Announcement channels not found.";
-
     return setupPage(
       `Success. /verify, /stats, /ai, and Approved were registered.
 
@@ -213,8 +210,7 @@ Stale CHITCHAT Workflows Cancelled: ${cancelledRuns}
 Stats Workflow Run: ${statsRun.runId}
 AI Workflow Run: ${aiRun.runId}
 
-${announcementStatus}
-Existing member count and online status automation remains active and continues syncing every 60 seconds.`,
+Existing member count, online status, welcome, and announcement automation remains active. The stats daemon performs the first sync after startup.`,
       false,
     );
   } catch (error) {
