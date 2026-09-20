@@ -280,6 +280,7 @@ async function createChitchatAiChatChannel(
 export async function ensureChitchatAiChatChannel(
   guildId: string,
   leaseToken: string,
+  statsLeaseToken?: string,
 ) {
   const channels = await getGuildChannels(guildId);
   const botUserId = await getBotUserId();
@@ -293,6 +294,16 @@ export async function ensureChitchatAiChatChannel(
         return a.id.localeCompare(b.id);
       }
     });
+
+  const statsMembersChannel = channels.find((channel) =>
+    isMembersCounterChannel(channel.name),
+  );
+
+  if (statsLeaseToken && statsMembersChannel) {
+    await modifyChannel(statsMembersChannel.id, {
+      topic: `CHITCHAT_STATS_LEASE:${statsLeaseToken}`,
+    });
+  }
 
   // Reuse the newest channel currently named ai-chat. This lets setup
   // recover cleanly when the owner renamed an existing channel manually.
