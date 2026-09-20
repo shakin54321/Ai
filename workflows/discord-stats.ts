@@ -17,6 +17,6 @@ export async function discordStatsDaemon(guildId: string) {
       console.error("[discord-stats] sync failed:", error);
     }
 
-    await sleep("30s");
+    await sleep("60s");
   }
 }
