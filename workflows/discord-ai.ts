@@ -2,7 +2,6 @@ import { sleep } from 'workflow';
 import {
   CHITCHAT_AI_LEASE_PREFIX,
   getBotUserId,
-  getChitchatAiChatChannel,
   getDiscordChannel,
   getDiscordChannelMessages,
   sendDiscordChannelMessage,
@@ -19,11 +18,6 @@ type DiscordMessage = {
     bot?: boolean;
   };
 };
-
-async function findAiChannelStep(guildId: string) {
-  'use step';
-  return await getChitchatAiChatChannel(guildId);
-}
 
 async function getBotUserIdStep() {
   'use step';
@@ -134,18 +128,21 @@ function buildHistory(
 }
 
 export async function chitchatAiDaemon(
-  guildId: string,
+  channelId: string,
   leaseToken: string,
 ) {
   'use workflow';
 
-  const channel = await findAiChannelStep(guildId);
+  // The setup route passes the exact channel ID it prepared. Do not rediscover
+  // the channel by name, because an owner can rename another channel to
+  // ai-chat and accidentally make name-based lookup target the wrong channel.
+  const channel = await getDiscordChannel(channelId);
   if (!channel) {
-    throw new Error('The ╌✦🤖ai-chat channel was not found in CHITCHAT.');
+    throw new Error('The CHITCHAT AI channel could not be found.');
   }
 
-  // Every setup run owns the AI channel through a unique lease token.
-  // Older/newer daemon runs terminate when their lease is no longer current.
+  // The active channel is fenced by a unique lease topic. Older/newer daemon
+  // runs terminate when their lease is no longer current.
   if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
     return;
   }
