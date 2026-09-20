@@ -3,9 +3,11 @@ import { after } from "next/server";
 import {
   addRole,
   editOriginalInteractionResponse,
+  editDiscordChannelMessage,
   env,
   syncGuildStats,
   getBotUserId,
+  getDiscordChannelMessage,
   getGuildChannels,
   getGuildMember,
   getGuildRoles,
@@ -163,6 +165,104 @@ export async function POST(request: NextRequest) {
               : "Owner access is not configured yet. Set DISCORD_OWNER_ID in Vercel before using management commands.",
             {color:0xef4444, footer:"Owner-only command"},
           )],
+          flags:64,
+        },
+      });
+    }
+  }
+
+  // Message context command: Apps → Approved
+  if (
+    interaction.type === 2 &&
+    interaction.data?.type === 3 &&
+    interaction.data?.name === "Approved"
+  ) {
+    const targetMessageId = interaction.data?.target_id;
+    const donationLogChannelId = await (async () => {
+      const channels = await getGuildChannels(guildId);
+      const match = channels.find((channel) => {
+        const normalized = (channel.name ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        return normalized.includes("DONATION") && normalized.includes("LOG");
+      });
+      return match?.id ?? null;
+    })();
+
+    try {
+      if (!targetMessageId) {
+        throw new Error("No donation message was selected.");
+      }
+
+      if (!donationLogChannelId || interaction.channel_id !== donationLogChannelId) {
+        throw new Error("Please use Approved on a message inside the donation log channel.");
+      }
+
+      const message = await getDiscordChannelMessage(donationLogChannelId, targetMessageId);
+      const botUserId = await getBotUserId();
+      const donationEmbed = message.embeds?.[0];
+      const title = typeof donationEmbed?.title === "string" ? donationEmbed.title : "";
+
+      if (message.author?.id !== botUserId || !title.includes("DONATION")) {
+        throw new Error("That message is not a valid donation log entry.");
+      }
+
+      if (title.includes("APPROVED")) {
+        return json({
+          type:4,
+          data:{
+            embeds:[embed("ALREADY APPROVED","This donation has already been marked as approved.",{color:0x22c55e, footer:"CHITCHAT • Donation review"})],
+            flags:64,
+          },
+        });
+      }
+
+      if (!title.includes("PENDING REVIEW")) {
+        throw new Error("Only pending donation entries can be approved.");
+      }
+
+      const approvedAt = new Intl.DateTimeFormat("en-BD", {
+        timeZone: "Asia/Dhaka",
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date());
+      const approver =
+        interaction.member?.user?.global_name ??
+        interaction.member?.user?.username ??
+        interaction.user?.global_name ??
+        interaction.user?.username ??
+        "Owner";
+
+      const currentFields = Array.isArray(donationEmbed.fields) ? donationEmbed.fields : [];
+      const fieldsWithoutStatus = currentFields.filter(
+        (field: any) => field?.name !== "STATUS" && field?.name !== "APPROVED BY",
+      );
+
+      await editDiscordChannelMessage(donationLogChannelId, targetMessageId, {
+        embeds: [{
+          ...donationEmbed,
+          title: "DONATION • APPROVED",
+          description: "This donation was manually reviewed and approved by the server owner.",
+          color: 0x22c55e,
+          fields: [
+            ...fieldsWithoutStatus,
+            {name: "STATUS", value: "✅ APPROVED", inline: true},
+            {name: "APPROVED BY", value: approver, inline: true},
+          ],
+          footer: {text: `CHITCHAT • Donation approved • ${approvedAt}`},
+        }],
+      });
+
+      return json({
+        type:4,
+        data:{
+          embeds:[embed("DONATION APPROVED","The selected donation log has been marked as approved.",{color:0x22c55e, footer:`Approved by ${approver}`})],
+          flags:64,
+        },
+      });
+    } catch (error) {
+      return json({
+        type:4,
+        data:{
+          embeds:[embed("APPROVAL FAILED",error instanceof Error ? error.message : "Unknown error",{color:0xef4444, footer:"Donation review"})],
           flags:64,
         },
       });
