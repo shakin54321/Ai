@@ -149,22 +149,32 @@ export async function POST(request: NextRequest) {
       return json({
         type:4,
         data:{
-          content:[
-            "╭────────────────────────╮",
-            "       **CHITCHAT**",
-            "     **VERIFICATION**",
-            "╰────────────────────────╯",
-            "",
-            "Welcome to CHITCHAT.",
-            "",
-            "Click the button below to verify your account and unlock the full server.",
-          ].join("\n"),
+          embeds:[{
+            title:"CHITCHAT",
+            description:"## Server Verification\\n\\nWelcome to the server.\\n\\nVerify your Discord account to unlock full access and continue.",
+            color:0x8b5cf6,
+            fields:[
+              {
+                name:"SECURE ACCESS",
+                value:"Verification is quick and handled directly through Discord.",
+                inline:false,
+              },
+              {
+                name:"WHAT HAPPENS NEXT",
+                value:"Complete verification below and your server access will be updated automatically.",
+                inline:false,
+              },
+            ],
+            footer:{
+              text:"CHITCHAT • Secure verification",
+            },
+          }],
           components:[{
             type:1,
             components:[{
               type:2,
-              style:3,
-              label:"VERIFY",
+              style:1,
+              label:"Verify Account",
               custom_id:VERIFY_BUTTON_ID,
             }],
           }],
