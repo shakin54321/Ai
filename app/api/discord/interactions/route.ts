@@ -154,12 +154,12 @@ export async function POST(request: NextRequest) {
               name:"✦ CHITCHAT",
             },
             title:"Verification Center",
-            description:"Welcome to the server.\\n\\nSecure your account to unlock full access and continue.",
+            description:"Welcome to the server.\n\nSecure your account to unlock full access and continue.",
             color:0x8b5cf6,
             fields:[
               {
                 name:"◈ SECURE ACCESS",
-                value:"Your Discord account will be verified directly through this server.\\nNo extra steps are required.",
+                value:"Your Discord account will be verified directly through this server.\nNo extra steps are required.",
                 inline:false,
               },
               {
@@ -259,7 +259,11 @@ export async function POST(request: NextRequest) {
     const response = json({
       type:4,
       data:{
-        embeds:[embed("VERIFICATION IN PROGRESS","Your verification request has been received. Please wait a few seconds.",{color:0x3b82f6, footer:"CHITCHAT verification"})],
+        embeds:[embed(
+          "VERIFICATION IN PROGRESS",
+          "Connecting to the verification system.\n\nPlease keep this message open while your access is being checked.",
+          {color:0x3b82f6, footer:"CHITCHAT • Verification system"},
+        )],
         flags:64,
       },
     });
@@ -309,8 +313,32 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        // 6.5 seconds matches the requested visible processing window without delaying the initial interaction acknowledgement.
-        await new Promise((resolve) => setTimeout(resolve, 6500));
+        // Show a live processing animation while the verification work is running.
+        const frames = [
+          {title:"VERIFYING ·", description:"Checking your Discord account.\n\nVerification is in progress.", color:0x3b82f6},
+          {title:"VERIFYING ··", description:"Checking your server access.\n\nVerification is in progress.", color:0x6366f1},
+          {title:"VERIFYING ···", description:"Finalizing your verification.\n\nAlmost there.", color:0x8b5cf6},
+          {title:"VERIFYING ·", description:"Confirming access permissions.\n\nPlease keep this message open.", color:0x6366f1},
+          {title:"VERIFYING ··", description:"Applying your server access.\n\nOne last check.", color:0x8b5cf6},
+          {title:"VERIFYING ···", description:"Completing verification.\n\nYour access is being unlocked.", color:0x3b82f6},
+        ];
+
+        const startedAt = Date.now();
+        for (const [index, frame] of frames.entries()) {
+          await editOriginalInteractionResponse(applicationId, token, {
+            embeds:[embed(frame.title, frame.description, {color:frame.color, footer:"CHITCHAT • Verification system"})],
+          }).catch(() => {});
+
+          if (index < frames.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 850));
+          }
+        }
+
+        const elapsed = Date.now() - startedAt;
+        const remaining = Math.max(0, 6500 - elapsed);
+        if (remaining > 0) {
+          await new Promise((resolve) => setTimeout(resolve, remaining));
+        }
         await finish();
       } catch (error) {
         await editOriginalInteractionResponse(applicationId, token, {
