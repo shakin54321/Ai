@@ -56,7 +56,7 @@ export async function getGuildChannels(guildId: string): Promise<Array<{id:strin
   return res.json();
 }
 
-export async function getGuildRoles(guildId: string): Promise<Array<{id:string;name:string;position:number;managed:boolean}>> {
+export async function getGuildRoles(guildId: string): Promise<Array<{id:string;name:string;position:number;managed:boolean;mentionable?:boolean}>> {
   const res = await discordFetch(`/guilds/${guildId}/roles`);
   if (!res.ok) throw new Error(`Discord roles lookup failed: ${res.status}`);
   return res.json();
@@ -588,7 +588,14 @@ export async function syncGuildStats(guildId: string) {
 
   const roles = await getGuildRoles(guildId);
   for (const role of roles) {
-    if (role.managed || !protectedRoleNames.has(role.name)) continue;
+    if (
+      role.managed ||
+      !protectedRoleNames.has(role.name) ||
+      role.mentionable === false
+    ) {
+      continue;
+    }
+
     updates.push(
       modifyRole(guildId, role.id, {mentionable: false}).catch((error) => {
         console.warn(
@@ -641,14 +648,16 @@ export async function syncGuildStats(guildId: string) {
   // exposes its native "Follow" option, and lock posting to the owner/bot.
   if (announcementChannels.length) {
     updates.push(
-      ...announcementChannels.map((channel) =>
-        configureAnnouncementChannel(guildId, channel.id).catch((error) => {
-          console.warn(
-            `[discord-announcement] could not configure ${channel.name}:`,
-            error,
-          );
-        }),
-      ),
+      ...announcementChannels
+        .filter((channel) => channel.type !== 5)
+        .map((channel) =>
+          configureAnnouncementChannel(guildId, channel.id).catch((error) => {
+            console.warn(
+              `[discord-announcement] could not configure ${channel.name}:`,
+              error,
+            );
+          }),
+        ),
     );
   }
 
