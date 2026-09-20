@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { env, findChitchatGuildId, syncGuildStats } from "@/lib/discord";
+import { findChitchatGuildId, syncGuildStats } from "@/lib/discord";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
