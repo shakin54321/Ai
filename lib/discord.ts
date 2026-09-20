@@ -168,7 +168,7 @@ export async function getDiscordChannelMessages(
   return res.json();
 }
 
-const AI_CHAT_CHANNEL_NAME = "╌✦🤖ai-chat";
+const AI_CHAT_CHANNEL_NAME = "╌╌✦🤖ai-chat";
 const AI_DISABLED_CHANNEL_NAME = "╌✦🤖ai-disabled-legacy";
 export const CHITCHAT_AI_LEASE_PREFIX = "CHITCHAT_AI_LEASE:";
 export const CHITCHAT_STATS_LEASE_PREFIX = "CHITCHAT_STATS_LEASE:";
