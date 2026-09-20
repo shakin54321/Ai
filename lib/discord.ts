@@ -269,40 +269,41 @@ export async function ensureChitchatAiChatChannel(
       }
     });
 
-  const template =
-    aiChannels.find((channel) => normalizeChannelName(channel.name) === "AICHAT") ??
-    aiChannels[aiChannels.length - 1];
+  // Reuse the newest channel currently named ai-chat. This lets setup
+  // recover cleanly when the owner renamed an existing channel manually.
+  let active = aiChannels
+    .filter((channel) => normalizeChannelName(channel.name) === "AICHAT")
+    .at(-1);
 
-  // Always create a brand-new active channel on setup. This guarantees every
-  // old workflow remains attached to an old channel ID and cannot follow the
-  // new channel.
-  const active = await createChitchatAiChatChannel(guildId, template);
+  if (!active) {
+    const template = aiChannels.at(-1);
+    active = await createChitchatAiChatChannel(guildId, template);
+  }
 
-  // Explicitly restore the bot's access on the new active channel even when
-  // the copied template contains a legacy bot deny overwrite.
   const botChannelPermissions =
     VIEW_CHANNEL_PERMISSION |
     SEND_MESSAGES_PERMISSION |
     READ_MESSAGE_HISTORY_PERMISSION;
 
+  // Restore the bot's access on the active channel even if it previously
+  // belonged to an older AI lease.
   await modifyChannelPermission(active.id, botUserId, {
     allow: botChannelPermissions.toString(),
     deny: "0",
     type: 1,
   });
 
-  // Fence every previous AI channel. Old workflow runs using those channel
-  // IDs will receive permission errors and stop producing public replies.
+  // Fence every other AI-related channel so stale workflow instances cannot
+  // read or write there. The active channel alone keeps the AI lease.
   let disabledIndex = 1;
   for (const channel of snowflakeSortOldestFirst(aiChannels)) {
+    if (channel.id === active.id) continue;
+
     const disabledName =
       disabledIndex === 1
         ? AI_DISABLED_CHANNEL_NAME
         : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
 
-    // Invalidate the old lease as well as its name/permissions. This is
-    // critical because already-running workflow instances check the channel
-    // topic before every reply.
     await modifyChannel(channel.id, {
       name: disabledName,
       topic: "CHITCHAT_AI_DISABLED",
@@ -322,7 +323,7 @@ export async function ensureChitchatAiChatChannel(
     topic: `${CHITCHAT_AI_LEASE_PREFIX}${leaseToken}`,
   });
 
-  return await getChitchatAiChatChannel(guildId);
+  return await getDiscordChannel(active.id);
 }
 
 export async function editDiscordChannelMessage(
