@@ -150,23 +150,26 @@ export async function POST(request: NextRequest) {
         type:4,
         data:{
           embeds:[{
-            title:"CHITCHAT",
-            description:"## Server Verification\\n\\nWelcome to the server.\\n\\nVerify your Discord account to unlock full access and continue.",
+            author:{
+              name:"✦ CHITCHAT",
+            },
+            title:"Verification Center",
+            description:"Welcome to the server.\\n\\nSecure your account to unlock full access and continue.",
             color:0x8b5cf6,
             fields:[
               {
-                name:"SECURE ACCESS",
-                value:"Verification is quick and handled directly through Discord.",
+                name:"◈ SECURE ACCESS",
+                value:"Your Discord account will be verified directly through this server.\\nNo extra steps are required.",
                 inline:false,
               },
               {
-                name:"WHAT HAPPENS NEXT",
-                value:"Complete verification below and your server access will be updated automatically.",
+                name:"◈ AFTER VERIFICATION",
+                value:"Your server access will be updated automatically once verification is complete.",
                 inline:false,
               },
             ],
             footer:{
-              text:"CHITCHAT • Secure verification",
+              text:"CHITCHAT  •  Verification Center",
             },
           }],
           components:[{
