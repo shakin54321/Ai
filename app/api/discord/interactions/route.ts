@@ -14,6 +14,7 @@ import {
   removeRole,
   verifyDiscordSignature,
 } from "@/lib/discord";
+import { generateChitchatAI, type ChitchatAIMessage } from "@/lib/ai";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -99,10 +100,79 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  // /ai is available to every member in every channel.
+  if (
+    interaction.type === 2 &&
+    interaction.data?.name === "ai"
+  ) {
+    const promptOption = Array.isArray(interaction.data?.options)
+      ? interaction.data.options.find(
+          (option: any) => option?.name === "prompt" && option?.type === 3,
+        )
+      : null;
+    const prompt =
+      typeof promptOption?.value === "string" ? promptOption.value.trim() : "";
+
+    if (!prompt) {
+      return json({
+        type: 4,
+        data: {
+          embeds: [
+            embed(
+              "CHITCHAT AI",
+              "Please provide a question or message after `/ai`.",
+              {color: 0xef4444, footer: "Example: /ai prompt: Hello"},
+            ),
+          ],
+          flags: 64,
+        },
+      });
+    }
+
+    const response = json({type: 5});
+
+    after(async () => {
+      try {
+        const messages: ChitchatAIMessage[] = [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ];
+        const answer = await generateChitchatAI(messages);
+        const safeAnswer = answer.length > 3900
+          ? answer.slice(0, 3897) + "..."
+          : answer;
+
+        await editOriginalInteractionResponse(applicationId, interaction.token, {
+          embeds: [
+            embed("✦ CHITCHAT AI", safeAnswer, {
+              color: 0xa855f7,
+              footer: "CHITCHAT • AI Assistant",
+            }),
+          ],
+        });
+      } catch (error) {
+        await editOriginalInteractionResponse(applicationId, interaction.token, {
+          embeds: [
+            embed(
+              "CHITCHAT AI • ERROR",
+              error instanceof Error
+                ? error.message.slice(0, 3900)
+                : "The AI could not generate a response right now.",
+              {color: 0xef4444, footer: "CHITCHAT • AI Assistant"},
+            ),
+          ],
+        }).catch(() => {});
+      }
+    });
+
+    return response;
+  }
+
   // All slash commands are owner-only. /verify is also owner-only:
   // non-owners are redirected to the public verification channel button.
-  if (interaction.type === 2) {
-    const commandName = interaction.data?.name;
+  if (interaction.type === 2) {    const commandName = interaction.data?.name;
 
     if (commandName === "verify" && !isOwner(interaction)) {
       try {
@@ -177,6 +247,22 @@ export async function POST(request: NextRequest) {
     interaction.data?.type === 3 &&
     interaction.data?.name === "Approved"
   ) {
+    if (!isOwner(interaction)) {
+      return json({
+        type: 4,
+        data: {
+          embeds: [
+            embed(
+              "ACCESS RESTRICTED",
+              "Only the CHITCHAT server owner can approve donation log entries.",
+              {color: 0xef4444, footer: "Owner-only donation action"},
+            ),
+          ],
+          flags: 64,
+        },
+      });
+    }
+
     const targetMessageId = interaction.data?.target_id;
     const donationLogChannelId = await (async () => {
       const channels = await getGuildChannels(guildId);
