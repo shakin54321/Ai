@@ -514,6 +514,21 @@ export async function registerVerifyCommand() {
       dm_permission: false,
     },
     {
+      name: "ai",
+      description: "Ask CHITCHAT AI anything.",
+      type: 1,
+      dm_permission: false,
+      options: [
+        {
+          name: "prompt",
+          description: "Your question or message",
+          type: 3,
+          required: true,
+          max_length: 2000,
+        },
+      ],
+    },
+    {
       name: "Approved",
       description: "",
       type: 3,
