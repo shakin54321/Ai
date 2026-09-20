@@ -300,8 +300,12 @@ export async function ensureChitchatAiChatChannel(
         ? AI_DISABLED_CHANNEL_NAME
         : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
 
+    // Invalidate the old lease as well as its name/permissions. This is
+    // critical because already-running workflow instances check the channel
+    // topic before every reply.
     await modifyChannel(channel.id, {
       name: disabledName,
+      topic: "CHITCHAT_AI_DISABLED",
     });
 
     await modifyChannelPermission(channel.id, botUserId, {
