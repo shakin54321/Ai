@@ -27,8 +27,6 @@ const UNVERIFIED_ROLE_NAME = "🔒 UNVERIFIED";
 const VERIFIED_ROLE_NAME = "✅ VERIFIED";
 const VERIFY_BUTTON_ID = "chitchat:verify";
 
-const PUBLIC_COMMANDS = new Set(["verify"]);
-
 function getInteractionUserId(interaction: any): string | null {
   return interaction.member?.user?.id ?? interaction.user?.id ?? null;
 }
@@ -99,15 +97,65 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // All slash commands are owner-only except /verify.
-  // This is enforced in code so Administrator permissions alone do not grant access.
+  // All slash commands are owner-only. /verify is also owner-only:
+  // non-owners are redirected to the public verification channel button.
   if (interaction.type === 2) {
     const commandName = interaction.data?.name;
-    if (!PUBLIC_COMMANDS.has(commandName) && !isOwner(interaction)) {
+
+    if (commandName === "verify" && !isOwner(interaction)) {
+      try {
+        const channels = await getGuildChannels(guildId);
+        const verifyChannel = channels.find(
+          (channel) => isVerifyChannelName(channel.name),
+        );
+
+        if (verifyChannel) {
+          return json({
+            type:4,
+            data:{
+              embeds:[embed(
+                "USE THE VERIFICATION BUTTON",
+                `Please go to <#${verifyChannel.id}> and click the Verify Account button to continue.`,
+                {
+                  color:0xf59e0b,
+                  footer:"Verification is handled in the verification channel",
+                },
+              )],
+              flags:64,
+            },
+          });
+        }
+
+        return json({
+          type:4,
+          data:{
+            embeds:[embed(
+              "VERIFICATION CHANNEL NOT FOUND",
+              "The verification channel is currently unavailable. Please contact the server owner.",
+              {color:0xef4444, footer:"CHITCHAT verification"},
+            )],
+            flags:64,
+          },
+        });
+      } catch (error) {
+        return json({
+          type:4,
+          data:{
+            embeds:[embed(
+              "VERIFICATION CHANNEL ERROR",
+              error instanceof Error ? error.message : "Unable to locate the verification channel.",
+              {color:0xef4444, footer:"CHITCHAT verification"},
+            )],
+            flags:64,
+          },
+        });
+      }
+    }
+
+    if (!isOwner(interaction)) {
       return json({
-        type: 4,
-        data: {
-          // Keep owner access enforced in code; this is only the presentation layer.
+        type:4,
+        data:{
           embeds:[embed(
             "ACCESS RESTRICTED",
             process.env.DISCORD_OWNER_ID
@@ -115,7 +163,7 @@ export async function POST(request: NextRequest) {
               : "Owner access is not configured yet. Set DISCORD_OWNER_ID in Vercel before using management commands.",
             {color:0xef4444, footer:"Owner-only command"},
           )],
-          flags: 64,
+          flags:64,
         },
       });
     }
