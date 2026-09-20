@@ -4,6 +4,7 @@ import {
   env,
   findChitchatGuildId,
   getChitchatAiChatChannel,
+  rotateChitchatAiChatChannel,
   registerVerifyCommand,
   syncGuildStats,
 } from "@/lib/discord";
@@ -127,6 +128,8 @@ async function registerWithSecret(suppliedSecret: string | null) {
     // Apply the latest Discord channel configuration immediately.
     // This also keeps the existing stats/welcome/verification behavior intact.
     const synced = await syncGuildStats(guildId);
+    // Rotate the legacy AI channel once so the old Vercel workflow run can no longer see new messages.
+    await rotateChitchatAiChatChannel(guildId);
     const aiChannel = await getChitchatAiChatChannel(guildId);
 
     if (!aiChannel) {
