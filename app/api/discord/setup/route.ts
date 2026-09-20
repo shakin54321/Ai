@@ -3,10 +3,11 @@ import { start } from "workflow/api";
 import {
   env,
   findChitchatGuildId,
+  getChitchatAiChatChannel,
   registerVerifyCommand,
   syncGuildStats,
 } from "@/lib/discord";
-import { discordStatsDaemon } from "@/workflows/discord-stats";
+import { chitchatAiDaemon } from "@/workflows/discord-ai";
 
 export const runtime = "nodejs";
 
@@ -82,7 +83,7 @@ function setupPage(message = "", isError = false) {
 <body>
   <main class="card">
     <h1>CHITCHAT AI Setup</h1>
-    <p>Enter your private setup secret to register <code>/verify</code>, <code>/stats</code>, the donation <code>Approved</code> message action, and start automatic server statistics sync.</p>
+    <p>Enter your private setup secret to register <code>/verify</code>, <code>/stats</code>, <code>/ai</code>, the donation <code>Approved</code> message action, and start CHITCHAT AI automation.</p>
     <form method="post">
       <input
         name="key"
@@ -125,24 +126,30 @@ async function registerWithSecret(suppliedSecret: string | null) {
     // Apply the latest Discord channel configuration immediately.
     // This also keeps the existing stats/welcome/verification behavior intact.
     const synced = await syncGuildStats(guildId);
+    const aiChannel = await getChitchatAiChatChannel(guildId);
 
-    const run = await start(discordStatsDaemon, [guildId]);
+    if (!aiChannel) {
+      throw new Error("The ╌✦🤖ai-chat channel was not found. Create that channel before starting CHITCHAT AI.");
+    }
+
+    const run = await start(chitchatAiDaemon, [guildId]);
 
     const announcementStatus = synced.announcementChannelIds?.length
       ? `Announcement channels configured: ${synced.announcementChannelNames.join(", ")}`
       : "Announcement channels not found.";
 
     return setupPage(
-      `Success. /verify, /stats, and Approved were registered.
+      `Success. /verify, /stats, /ai, and Approved were registered.
 
-Registered commands: ${commandNames || "/verify, /stats"}
+Registered commands: ${commandNames || "/verify, /stats, /ai"}
 Application ID: ${env("DISCORD_CLIENT_ID")}
 Guild ID: ${guildId}
-Automation: ACTIVE
-Workflow Run: ${run.runId}
+AI Automation: ACTIVE
+AI Channel: ${aiChannel.name ?? "╌✦🤖ai-chat"}
+AI Workflow Run: ${run.runId}
 
 ${announcementStatus}
-Member count and online status sync every 60 seconds using Vercel Workflow.`,
+Existing member count and online status automation remains active and continues syncing every 60 seconds.`,
       false,
     );
   } catch (error) {
