@@ -13,7 +13,7 @@ import { chitchatAiDaemon } from "@/workflows/discord-ai";
 
 export const runtime = "nodejs";
 
-async function cancelActiveChitchatAiRuns() {
+async function cancelActiveChitchatRuns() {
   const world = await getWorld();
   let cancelled = 0;
 
@@ -37,7 +37,9 @@ async function cancelActiveChitchatAiRuns() {
 
         if (
           !workflowName.includes("chitchatAiDaemon") &&
-          !workflowName.includes("discord-ai")
+          !workflowName.includes("discord-ai") &&
+          !workflowName.includes("discordStatsDaemon") &&
+          !workflowName.includes("discord-stats")
         ) {
           continue;
         }
@@ -177,7 +179,7 @@ async function registerWithSecret(suppliedSecret: string | null) {
     // Hard-stop every previously running CHITCHAT AI daemon before creating
     // the replacement. This targets the durable workflow runs themselves,
     // so stale executions cannot keep replying after a redeploy/channel swap.
-    const cancelledAiRuns = await cancelActiveChitchatAiRuns();
+    const cancelledRuns = await cancelActiveChitchatRuns();
 
     // Apply the latest Discord channel configuration immediately.
     // This also keeps the existing stats/welcome/verification behavior intact.
@@ -193,7 +195,7 @@ async function registerWithSecret(suppliedSecret: string | null) {
     }
 
     const statsRun = await start(discordStatsDaemon, [guildId]);
-    const aiRun = await start(chitchatAiDaemon, [guildId, aiLeaseToken]);
+    const aiRun = await start(chitchatAiDaemon, [aiChannel.id, aiLeaseToken]);
 
     const announcementStatus = synced.announcementChannelIds?.length
       ? `Announcement channels configured: ${synced.announcementChannelNames.join(", ")}`
@@ -207,7 +209,7 @@ Application ID: ${env("DISCORD_CLIENT_ID")}
 Guild ID: ${guildId}
 AI Automation: ACTIVE
 AI Channel: ${aiChannel.name ?? "╌✦🤖ai-chat"}
-Stale AI Workflows Cancelled: ${cancelledAiRuns}
+Stale CHITCHAT Workflows Cancelled: ${cancelledRuns}
 Stats Workflow Run: ${statsRun.runId}
 AI Workflow Run: ${aiRun.runId}
 
