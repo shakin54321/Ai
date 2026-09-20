@@ -108,21 +108,25 @@ async function registerWithSecret(suppliedSecret: string | null) {
   }
 
   try {
-    const command = await registerVerifyCommand();
+    const registered = await registerVerifyCommand();
+    const commands = Array.isArray(registered) ? registered : [registered];
+    const commandNames = commands
+      .map((item: any) => (item?.name ? `/${item.name}` : null))
+      .filter(Boolean)
+      .join(", ");
     const guildId = await findChitchatGuildId();
     const run = await start(discordStatsDaemon, [guildId]);
 
     return setupPage(
       `Success. /verify and /stats were registered.
 
-Command ID: ${command.id}
-Name: ${command.name}
+Registered commands: ${commandNames || "/verify, /stats"}
 Application ID: ${env("DISCORD_CLIENT_ID")}
 Guild ID: ${guildId}
 Automation: ACTIVE
 Workflow Run: ${run.runId}
 
-Member count and online status sync every 30 seconds using Vercel Workflow.`,
+Member count and online status sync every 60 seconds using Vercel Workflow.`,
       false,
     );
   } catch (error) {
