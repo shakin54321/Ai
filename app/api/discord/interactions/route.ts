@@ -256,18 +256,29 @@ export async function POST(request: NextRequest) {
       return json({
         type: 4,
         data: {
-          embeds:[embed(
-            "SERVER STATS UPDATED",
-            "The live server statistics have been refreshed successfully.",
-            {
-              fields:[
-                {name:"Members", value:String(result.memberCount), inline:true},
-                {name:"Online", value:String(result.onlineCount ?? "N/A"), inline:true},
-              ],
-              footer:"CHITCHAT live statistics",
+          embeds:[{
+            author:{
+              name:"✦ CHITCHAT",
             },
-          )],
-          flags:64,
+            title:"LIVE SERVER STATUS",
+            description:"The server statistics have been refreshed and are now up to date.",
+            color:0xa855f7,
+            fields:[
+              {
+                name:"👥 MEMBERS",
+                value:`**${result.memberCount}** members`,
+                inline:true,
+              },
+              {
+                name:"🟢 ONLINE",
+                value:`**${result.onlineCount ?? "N/A"}** online`,
+                inline:true,
+              },
+            ],
+            footer:{
+              text:"CHITCHAT  •  Live server statistics",
+            },
+          }],
         },
       });
     } catch (error) {
