@@ -97,11 +97,17 @@ function isTargetChannel(name: string | undefined, target: string) {
 }
 
 export function levelFromRoleName(name?: string | null) {
-  if (!name) return 0;
-  const escapedPrefix = LEVEL_ROLE_STYLE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = name.match(new RegExp(`^${escapedPrefix}(\\d{1,3}) ✮⋆˙$`));
-  const level = match ? Number(match[1]) : 0;
-  return level >= 1 && level <= 100 ? level : 0;
+  if (!name || !name.startsWith(LEVEL_ROLE_STYLE) || !name.endsWith(" ✮⋆˙")) {
+    return 0;
+  }
+
+  const raw = name.slice(
+    LEVEL_ROLE_STYLE.length,
+    name.length - " ✮⋆˙".length,
+  );
+  const level = Number(raw);
+
+  return Number.isInteger(level) && level >= 1 && level <= 100 ? level : 0;
 }
 
 export function levelProgress(xp: number) {
@@ -401,6 +407,7 @@ export async function readLevelStore(guildId: string, dataChannelId?: string) {
   }
 
   const users = new Map<string, StoredLevelUser>();
+  const messageIds = new Map<string, string>();
   for (const message of allMessages) {
     if (message.author?.id !== botUserId || typeof message.content !== "string") continue;
     if (!message.content.startsWith(LEVEL_DATA_PREFIX)) continue;
@@ -419,6 +426,9 @@ export async function readLevelStore(guildId: string, dataChannelId?: string) {
           displayName: typeof record.displayName === "string" ? record.displayName : "Member",
           avatar: typeof record.avatar === "string" ? record.avatar : null,
         });
+        if (typeof message.id === "string") {
+          messageIds.set(record.userId, message.id);
+        }
       }
     } catch {
       // Ignore malformed internal storage messages.
@@ -427,6 +437,7 @@ export async function readLevelStore(guildId: string, dataChannelId?: string) {
 
   return {
     users,
+    messageIds,
     dataChannelId: dataChannel.id,
   };
 }
