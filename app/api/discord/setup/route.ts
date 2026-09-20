@@ -3,8 +3,7 @@ import { start } from "workflow/api";
 import {
   env,
   findChitchatGuildId,
-  getChitchatAiChatChannel,
-  rotateChitchatAiChatChannel,
+  ensureChitchatAiChatChannel,
   registerVerifyCommand,
   syncGuildStats,
 } from "@/lib/discord";
@@ -128,16 +127,17 @@ async function registerWithSecret(suppliedSecret: string | null) {
     // Apply the latest Discord channel configuration immediately.
     // This also keeps the existing stats/welcome/verification behavior intact.
     const synced = await syncGuildStats(guildId);
-    // Rotate the legacy AI channel once so the old Vercel workflow run can no longer see new messages.
-    await rotateChitchatAiChatChannel(guildId);
-    const aiChannel = await getChitchatAiChatChannel(guildId);
+    // Give this AI daemon a unique lease. The helper creates a fresh active
+    // channel whenever the current channel was owned by an older daemon.
+    const aiLeaseToken = crypto.randomUUID();
+    const aiChannel = await ensureChitchatAiChatChannel(guildId, aiLeaseToken);
 
     if (!aiChannel) {
-      throw new Error("The ╌✦🤖ai-chat channel was not found. Create that channel before starting CHITCHAT AI.");
+      throw new Error("The ╌✦🤖ai-chat channel could not be prepared.");
     }
 
     const statsRun = await start(discordStatsDaemon, [guildId]);
-    const aiRun = await start(chitchatAiDaemon, [guildId]);
+    const aiRun = await start(chitchatAiDaemon, [guildId, aiLeaseToken]);
 
     const announcementStatus = synced.announcementChannelIds?.length
       ? `Announcement channels configured: ${synced.announcementChannelNames.join(", ")}`
