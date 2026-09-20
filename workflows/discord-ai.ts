@@ -30,15 +30,10 @@ async function getBotUserIdStep() {
   return await getBotUserId();
 }
 
-async function getAiLeaseTopicStep(channelId: string) {
+async function isAiLeaseCurrentStep(channelId: string, leaseToken: string) {
   'use step';
   const channel = await getDiscordChannel(channelId);
-  return channel.topic ?? null;
-}
-
-async function isAiLeaseCurrentStep(channelId: string, leaseToken: string) {
-  const topic = await getAiLeaseTopicStep(channelId);
-  return topic === `${CHITCHAT_AI_LEASE_PREFIX}${leaseToken}`;
+  return (channel.topic ?? "") === `${CHITCHAT_AI_LEASE_PREFIX}${leaseToken}`;
 }
 
 async function getRecentMessagesStep(channelId: string, after?: string | null) {
