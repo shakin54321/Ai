@@ -16,6 +16,12 @@ export const runtime = "nodejs";
 export const maxDuration = 15;
 
 const VERIFY_CHANNEL_NAME = "VERIFY-HERE";
+
+function isVerifyChannelName(name?: string) {
+  if (!name) return false;
+  const normalized = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return normalized === "VERIFYHERE";
+}
 const UNVERIFIED_ROLE_NAME = "🔒 UNVERIFIED";
 const VERIFIED_ROLE_NAME = "✅ VERIFIED";
 const VERIFY_BUTTON_ID = "chitchat:verify";
@@ -67,7 +73,7 @@ export async function POST(request: NextRequest) {
     try {
       const channels = await getGuildChannels(guildId);
       const verifyChannel = channels.find(
-        (channel) => channel.name?.toUpperCase() === VERIFY_CHANNEL_NAME,
+        (channel) => isVerifyChannelName(channel.name),
       );
 
       if (!verifyChannel || interaction.channel_id !== verifyChannel.id) {
