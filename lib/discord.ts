@@ -94,6 +94,23 @@ export async function removeRole(guildId: string, userId: string, roleId: string
 }
 
 
+export async function getBotGuilds() {
+  const res = await discordFetch("/users/@me/guilds?limit=200");
+  if (!res.ok) throw new Error(`Discord bot guild lookup failed: ${res.status}`);
+  return res.json() as Promise<Array<{id:string;name:string}>>;
+}
+
+export async function findChitchatGuildId() {
+  const guilds = await getBotGuilds();
+  const matches = guilds.filter((guild) => guild.name?.trim().toUpperCase() === "CHITCHAT");
+  if (matches.length === 1) return matches[0].id;
+  if (matches.length > 1) {
+    throw new Error("More than one CHITCHAT server was found.");
+  }
+  if (guilds.length === 1) return guilds[0].id;
+  throw new Error("Could not identify the CHITCHAT server.");
+}
+
 export async function getGuildWithCounts(guildId: string) {
   const res = await discordFetch(`/guilds/${guildId}?with_counts=true`);
   if (!res.ok) throw new Error(`Discord guild lookup failed: ${res.status}`);
