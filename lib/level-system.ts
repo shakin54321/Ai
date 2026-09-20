@@ -387,6 +387,7 @@ export async function readLevelStore(guildId: string, dataChannelId?: string) {
   if (!dataChannel) {
     return {
       users: new Map<string, StoredLevelUser>(),
+      messageIds: new Map<string, string>(),
       dataChannelId: null as string | null,
     };
   }
