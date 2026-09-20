@@ -19,6 +19,11 @@ type DiscordMessage = {
   };
 };
 
+async function getChannelStep(channelId: string) {
+  'use step';
+  return await getDiscordChannel(channelId);
+}
+
 async function getBotUserIdStep() {
   'use step';
   return await getBotUserId();
@@ -136,7 +141,7 @@ export async function chitchatAiDaemon(
   // The setup route passes the exact channel ID it prepared. Do not rediscover
   // the channel by name, because an owner can rename another channel to
   // ai-chat and accidentally make name-based lookup target the wrong channel.
-  const channel = await getDiscordChannel(channelId);
+  const channel = await getChannelStep(channelId);
   if (!channel) {
     throw new Error('The CHITCHAT AI channel could not be found.');
   }
