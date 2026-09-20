@@ -218,7 +218,6 @@ export async function registerVerifyCommand() {
       description: "Refresh the CHITCHAT member and online stats.",
       type: 1,
       dm_permission: false,
-      default_member_permissions: "8",
     },
   ];
 
