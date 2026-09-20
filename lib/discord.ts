@@ -93,6 +93,99 @@ export async function removeRole(guildId: string, userId: string, roleId: string
   }
 }
 
+
+export async function getGuildWithCounts(guildId: string) {
+  const res = await discordFetch(`/guilds/${guildId}?with_counts=true`);
+  if (!res.ok) throw new Error(`Discord guild lookup failed: ${res.status}`);
+  return res.json();
+}
+
+export async function modifyChannel(
+  channelId: string,
+  data: Record<string, unknown>,
+) {
+  const res = await discordFetch(`/channels/${channelId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord channel update failed: ${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
+function normalizeChannelName(name?: string) {
+  return (name ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function isMembersCounterChannel(name?: string) {
+  const normalized = normalizeChannelName(name);
+  return normalized.startsWith("MEMBERS") && /\d+$/.test(normalized);
+}
+
+function isStatusChannel(name?: string) {
+  const normalized = normalizeChannelName(name);
+  return normalized.includes("STATUS") && normalized.includes("ONLINE");
+}
+
+export async function syncGuildStats(guildId: string) {
+  const guild = await getGuildWithCounts(guildId);
+  const memberCount =
+    typeof guild.approximate_member_count === "number"
+      ? guild.approximate_member_count
+      : null;
+  const onlineCount =
+    typeof guild.approximate_presence_count === "number"
+      ? guild.approximate_presence_count
+      : null;
+
+  if (memberCount === null) {
+    throw new Error("Discord did not return the member count.");
+  }
+
+  const channels = await getGuildChannels(guildId);
+  const membersChannel = channels.find((channel) =>
+    isMembersCounterChannel(channel.name),
+  );
+  const statusChannel = channels.find((channel) =>
+    isStatusChannel(channel.name),
+  );
+
+  if (!membersChannel) {
+    throw new Error("Members counter channel was not found.");
+  }
+
+  const memberName = membersChannel.name ?? "members-000";
+  const nextMemberName = memberName.replace(/\d+$/u, String(memberCount));
+
+  const updates: Promise<unknown>[] = [];
+  if (nextMemberName !== memberName) {
+    updates.push(modifyChannel(membersChannel.id, {name: nextMemberName}));
+  }
+
+  // Keep the status channel's requested online indicator intact.
+  if (statusChannel && !statusChannel.name?.includes("🟢")) {
+    updates.push(
+      modifyChannel(statusChannel.id, {
+        name: `${statusChannel.name}🟢`,
+      }),
+    );
+  }
+
+  await Promise.all(updates);
+
+  return {
+    guildId,
+    memberCount,
+    onlineCount,
+    membersChannelId: membersChannel.id,
+    statusChannelId: statusChannel?.id ?? null,
+    membersChannelName: nextMemberName,
+    statusChannelName: statusChannel?.name ?? null,
+  };
+}
+
 export async function registerVerifyCommand() {
   const appId = env("DISCORD_CLIENT_ID");
   const token = env("DISCORD_BOT_TOKEN");
