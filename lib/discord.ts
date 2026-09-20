@@ -132,6 +132,21 @@ export async function modifyChannel(
   return res.json();
 }
 
+export async function modifyGuild(
+  guildId: string,
+  data: Record<string, unknown>,
+) {
+  const res = await discordFetch(`/guilds/${guildId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord guild update failed: ${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
 function normalizeChannelName(name?: string) {
   return (name ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -144,6 +159,11 @@ function isMembersCounterChannel(name?: string) {
 function isStatusChannel(name?: string) {
   const normalized = normalizeChannelName(name);
   return normalized.includes("STATUS") && normalized.includes("ONLINE");
+}
+
+function isWelcomeChannel(name?: string) {
+  const normalized = normalizeChannelName(name);
+  return normalized.includes("WELCOME");
 }
 
 export async function syncGuildStats(guildId: string) {
@@ -168,6 +188,9 @@ export async function syncGuildStats(guildId: string) {
   const statusChannel = channels.find((channel) =>
     isStatusChannel(channel.name),
   );
+  const welcomeChannel = channels.find((channel) =>
+    isWelcomeChannel(channel.name),
+  );
 
   if (!membersChannel) {
     throw new Error("Members counter channel was not found.");
@@ -190,6 +213,27 @@ export async function syncGuildStats(guildId: string) {
     );
   }
 
+  // Let Discord itself post a join notification in the configured welcome channel.
+  // This avoids a separate Gateway server while keeping verification untouched.
+  if (welcomeChannel) {
+    const currentFlags =
+      typeof guild.system_channel_flags === "number"
+        ? guild.system_channel_flags
+        : 0;
+    const joinMessagesSuppressed = (currentFlags & 1) !== 0;
+    if (
+      guild.system_channel_id !== welcomeChannel.id ||
+      joinMessagesSuppressed
+    ) {
+      updates.push(
+        modifyGuild(guildId, {
+          system_channel_id: welcomeChannel.id,
+          system_channel_flags: currentFlags & ~1,
+        }),
+      );
+    }
+  }
+
   await Promise.all(updates);
 
   return {
@@ -198,8 +242,10 @@ export async function syncGuildStats(guildId: string) {
     onlineCount,
     membersChannelId: membersChannel.id,
     statusChannelId: statusChannel?.id ?? null,
+    welcomeChannelId: welcomeChannel?.id ?? null,
     membersChannelName: nextMemberName,
     statusChannelName: statusChannel?.name ?? null,
+    welcomeChannelName: welcomeChannel?.name ?? null,
   };
 }
 
