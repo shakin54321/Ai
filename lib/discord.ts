@@ -48,7 +48,7 @@ async function discordFetch(path: string, init: RequestInit = {}) {
   });
 }
 
-export async function getGuildChannels(guildId: string): Promise<Array<{id:string;name?:string;type:number}>> {
+export async function getGuildChannels(guildId: string): Promise<Array<{id:string;name?:string;type:number;topic?:string|null;position?:number;parent_id?:string|null;rate_limit_per_user?:number;nsfw?:boolean;permission_overwrites?:Array<{id:string;type:0|1;allow:string;deny:string}>}>> {
   const res = await discordFetch(`/guilds/${guildId}/channels`);
   if (!res.ok) throw new Error(`Discord channels lookup failed: ${res.status}`);
   return res.json();
@@ -142,103 +142,96 @@ export async function getDiscordChannelMessages(
   return res.json();
 }
 
-export async function getChitchatAiChatChannel(
-  guildId: string,
-): Promise<{id:string;name?:string;type:number} | null> {
-  const channels = await getGuildChannels(guildId);
+const AI_CHAT_CHANNEL_NAME = "╌✦🤖ai-chat";
+const AI_DISABLED_CHANNEL_NAME = "╌✦🤖ai-disabled-legacy";
+export const CHITCHAT_AI_LEASE_PREFIX = "CHITCHAT_AI_LEASE:";
+
+function snowflakeSortOldestFirst<T extends {id: string}>(items: T[]) {
+  return [...items].sort((a, b) => {
+    try {
+      return Number(BigInt(a.id) - BigInt(b.id));
+    } catch {
+      return a.id.localeCompare(b.id);
+    }
+  });
+}
+
+function isAiRelatedChannel(name?: string) {
+  const normalized = normalizeChannelName(name);
   return (
-    channels.find((channel) => {
-      const normalized = normalizeChannelName(channel.name);
-      return normalized.includes("AICHAT");
-    }) ?? null
+    normalized === "AICHAT" ||
+    normalized.startsWith("AIARCHIVELEGACY") ||
+    normalized.startsWith("AIDISABLEDLEGACY")
   );
 }
 
-const AI_CHAT_LEGACY_NAME = "╌✦🤖ai-archive-legacy";
-
-export async function rotateChitchatAiChatChannel(guildId: string) {
-  const channels = await getGuildChannels(guildId);
-  const candidates = channels.filter((channel) => {
-    const normalized = normalizeChannelName(channel.name);
-    return normalized === "AICHAT" || normalized.startsWith("AIARCHIVELEGACY");
-  });
-
-  const template = candidates.find(
-    (channel) => normalizeChannelName(channel.name) === "AICHAT",
-  ) ?? candidates[0];
-
-  const renamedLegacyIds = new Set<string>();
-  let legacyIndex = 1;
-
-  // Move every channel that could belong to an older AI daemon out of the
-  // active name. Existing long-running workflows keep their old channel IDs,
-  // so this cleanly fences them away from the fresh channel below.
-  for (const channel of candidates) {
-    const legacyName =
-      legacyIndex === 1
-        ? AI_CHAT_LEGACY_NAME
-        : `${AI_CHAT_LEGACY_NAME}-${legacyIndex}`;
-
-    await modifyChannel(channel.id, {name: legacyName});
-    renamedLegacyIds.add(channel.id);
-    legacyIndex += 1;
+export async function getDiscordChannel(channelId: string) {
+  const res = await discordFetch(`/channels/${channelId}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord channel lookup failed: ${res.status} ${detail}`);
   }
+  return res.json() as Promise<{
+    id: string;
+    name?: string;
+    type: number;
+    topic?: string | null;
+    position?: number;
+    parent_id?: string | null;
+    rate_limit_per_user?: number;
+    nsfw?: boolean;
+    permission_overwrites?: Array<{
+      id: string;
+      type: 0 | 1;
+      allow: string;
+      deny: string;
+    }>;
+  }>;
+}
 
-  if (template) {
-    const currentRes = await discordFetch(`/channels/${template.id}`);
-    if (!currentRes.ok) {
-      const detail = await currentRes.text().catch(() => "");
-      throw new Error(`Discord AI channel lookup failed: ${currentRes.status} ${detail}`);
-    }
-
-    const current = await currentRes.json() as {
-      type?: number;
-      parent_id?: string | null;
-      position?: number;
-      topic?: string | null;
-      rate_limit_per_user?: number;
-      nsfw?: boolean;
-      permission_overwrites?: Array<{
-        id: string;
-        type: 0 | 1;
-        allow: string;
-        deny: string;
-      }>;
-    };
-
-    const createRes = await discordFetch(`/guilds/${guildId}/channels`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: "╌✦🤖ai-chat",
-        type: current.type ?? 0,
-        position: current.position,
-        parent_id: current.parent_id ?? undefined,
-        topic: current.topic ?? undefined,
-        rate_limit_per_user: current.rate_limit_per_user ?? undefined,
-        nsfw: current.nsfw ?? undefined,
-        permission_overwrites: current.permission_overwrites ?? [],
-      }),
+export async function getChitchatAiChatChannel(
+  guildId: string,
+): Promise<{id:string;name?:string;type:number;topic?:string|null} | null> {
+  const channels = await getGuildChannels(guildId);
+  const active = channels
+    .filter((channel) => normalizeChannelName(channel.name) === "AICHAT")
+    .sort((a, b) => {
+      try {
+        return Number(BigInt(a.id) - BigInt(b.id));
+      } catch {
+        return a.id.localeCompare(b.id);
+      }
     });
 
-    if (!createRes.ok) {
-      const detail = await createRes.text().catch(() => "");
-      throw new Error(`Discord AI channel recreation failed: ${createRes.status} ${detail}`);
-    }
+  return active.at(-1) ?? null;
+}
 
-    return await createRes.json() as {
+async function createChitchatAiChatChannel(
+  guildId: string,
+  template?: {
+    type?: number;
+    position?: number;
+    parent_id?: string | null;
+    rate_limit_per_user?: number;
+    nsfw?: boolean;
+    permission_overwrites?: Array<{
       id: string;
-      name?: string;
-      type: number;
-    };
-  }
-
-  // If no previous AI channel exists, create the requested channel from
-  // scratch. This is also safe for a brand-new CHITCHAT server.
+      type: 0 | 1;
+      allow: string;
+      deny: string;
+    }>;
+  },
+) {
   const createRes = await discordFetch(`/guilds/${guildId}/channels`, {
     method: "POST",
     body: JSON.stringify({
-      name: "╌✦🤖ai-chat",
-      type: 0,
+      name: AI_CHAT_CHANNEL_NAME,
+      type: template?.type ?? 0,
+      position: template?.position,
+      parent_id: template?.parent_id ?? undefined,
+      rate_limit_per_user: template?.rate_limit_per_user ?? undefined,
+      nsfw: template?.nsfw ?? undefined,
+      permission_overwrites: template?.permission_overwrites ?? [],
     }),
   });
 
@@ -251,7 +244,77 @@ export async function rotateChitchatAiChatChannel(guildId: string) {
     id: string;
     name?: string;
     type: number;
+    topic?: string | null;
   };
+}
+
+export async function ensureChitchatAiChatChannel(
+  guildId: string,
+  leaseToken: string,
+) {
+  const channels = await getGuildChannels(guildId);
+  const activeChannels = channels
+    .filter((channel) => normalizeChannelName(channel.name) === "AICHAT")
+    .sort((a, b) => {
+      try {
+        return Number(BigInt(a.id) - BigInt(b.id));
+      } catch {
+        return a.id.localeCompare(b.id);
+      }
+    });
+  const legacyChannels = channels.filter((channel) => {
+    const normalized = normalizeChannelName(channel.name);
+    return normalized.startsWith("AIARCHIVELEGACY") || normalized.startsWith("AIDISABLEDLEGACY");
+  });
+
+  let active = activeChannels.at(-1);
+
+  // A channel without our lease marker may still belong to an older daemon.
+  // Create a fresh channel so old workflow runs remain fenced to their old IDs.
+  const activeIsManaged =
+    typeof active?.topic === "string" &&
+    active.topic.startsWith(CHITCHAT_AI_LEASE_PREFIX);
+
+  if (!active || !activeIsManaged) {
+    const template = active ?? legacyChannels[0];
+    active = await createChitchatAiChatChannel(guildId, template);
+
+    const oldActiveChannels = activeChannels.filter((channel) => channel.id !== active!.id);
+    const oldAiChannels = [...oldActiveChannels, ...legacyChannels];
+
+    let disabledIndex = 1;
+    for (const channel of snowflakeSortOldestFirst(oldAiChannels)) {
+      const disabledName =
+        disabledIndex === 1
+          ? AI_DISABLED_CHANNEL_NAME
+          : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
+      await modifyChannel(channel.id, {name: disabledName});
+      disabledIndex += 1;
+    }
+  } else {
+    // Keep one canonical active AI channel and fence any extra legacy/active copies.
+    const extras = [
+      ...activeChannels.filter((channel) => channel.id !== active!.id),
+      ...legacyChannels,
+    ];
+
+    let disabledIndex = 1;
+    for (const channel of snowflakeSortOldestFirst(extras)) {
+      const disabledName =
+        disabledIndex === 1
+          ? AI_DISABLED_CHANNEL_NAME
+          : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
+      await modifyChannel(channel.id, {name: disabledName});
+      disabledIndex += 1;
+    }
+  }
+
+  await modifyChannel(active.id, {
+    name: AI_CHAT_CHANNEL_NAME,
+    topic: `${CHITCHAT_AI_LEASE_PREFIX}${leaseToken}`,
+  });
+
+  return await getChitchatAiChatChannel(guildId);
 }
 
 export async function editDiscordChannelMessage(
