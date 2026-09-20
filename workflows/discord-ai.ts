@@ -1,7 +1,9 @@
 import { sleep } from 'workflow';
 import {
+  CHITCHAT_AI_LEASE_PREFIX,
   getBotUserId,
   getChitchatAiChatChannel,
+  getDiscordChannel,
   getDiscordChannelMessages,
   sendDiscordChannelMessage,
 } from '@/lib/discord';
@@ -26,6 +28,17 @@ async function findAiChannelStep(guildId: string) {
 async function getBotUserIdStep() {
   'use step';
   return await getBotUserId();
+}
+
+async function getAiLeaseTopicStep(channelId: string) {
+  'use step';
+  const channel = await getDiscordChannel(channelId);
+  return channel.topic ?? null;
+}
+
+async function isAiLeaseCurrentStep(channelId: string, leaseToken: string) {
+  const topic = await getAiLeaseTopicStep(channelId);
+  return topic === `${CHITCHAT_AI_LEASE_PREFIX}${leaseToken}`;
 }
 
 async function getRecentMessagesStep(channelId: string, after?: string | null) {
@@ -125,12 +138,21 @@ function buildHistory(
     });
 }
 
-export async function chitchatAiDaemon(guildId: string) {
+export async function chitchatAiDaemon(
+  guildId: string,
+  leaseToken: string,
+) {
   'use workflow';
 
   const channel = await findAiChannelStep(guildId);
   if (!channel) {
     throw new Error('The ╌✦🤖ai-chat channel was not found in CHITCHAT.');
+  }
+
+  // Every setup run owns the AI channel through a unique lease token.
+  // Older/newer daemon runs terminate when their lease is no longer current.
+  if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
+    return;
   }
 
   const botUserId = await getBotUserIdStep();
@@ -145,6 +167,10 @@ export async function chitchatAiDaemon(guildId: string) {
   let lastSeenMessageId = initialSorted.at(-1)?.id ?? null;
 
   while (true) {
+    if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
+      return;
+    }
+
     try {
       const messages = (await getRecentMessagesStep(
         channel.id,
@@ -175,6 +201,11 @@ export async function chitchatAiDaemon(guildId: string) {
 
         try {
           const answer = await generateReplyStep(aiMessages);
+
+          if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
+            return;
+          }
+
           await sendReplyStep(
             channel.id,
             message.id,
@@ -189,12 +220,14 @@ export async function chitchatAiDaemon(guildId: string) {
 
           // Keep the public error message intentionally generic so secrets
           // or provider details never leak into the Discord channel.
-          await sendReplyStep(
-            channel.id,
-            message.id,
-            message.author.id,
-            'I could not generate a response right now. Please try again in a moment.',
-          ).catch(() => {});
+          if (await isAiLeaseCurrentStep(channel.id, leaseToken)) {
+            await sendReplyStep(
+              channel.id,
+              message.id,
+              message.author.id,
+              'I could not generate a response right now. Please try again in a moment.',
+            ).catch(() => {});
+          }
         }
       }
     } catch (error) {
