@@ -15,53 +15,69 @@ export const runtime = "nodejs";
 
 async function cancelActiveChitchatRuns() {
   const world = await getWorld();
-  let cancelled = 0;
+  const cancelledRunIds = new Set<string>();
 
-  for (const status of ["pending", "running"] as const) {
-    let cursor: string | undefined;
+  for (let pass = 0; pass < 3; pass += 1) {
+    let foundActive = false;
 
-    do {
-      const page = await world.runs.list({
-        status,
-        pagination: {
-          limit: 100,
-          ...(cursor ? {cursor} : {}),
-        },
-        resolveData: "none",
-      });
+    for (const status of ["pending", "running"] as const) {
+      let cursor: string | undefined;
 
-      for (const run of page.data) {
-        const workflowName = typeof run.workflowName === "string"
-          ? run.workflowName
-          : "";
+      do {
+        const page = await world.runs.list({
+          status,
+          pagination: {
+            limit: 100,
+            ...(cursor ? {cursor} : {}),
+          },
+          resolveData: "none",
+        });
 
-        if (
-          !workflowName.includes("chitchatAiDaemon") &&
-          !workflowName.includes("discord-ai") &&
-          !workflowName.includes("discordStatsDaemon") &&
-          !workflowName.includes("discord-stats")
-        ) {
-          continue;
-        }
+        const matchingRuns = page.data.filter((run) => {
+          const workflowName =
+            typeof run.workflowName === "string" ? run.workflowName : "";
 
-        try {
-          await world.events.create(run.runId, {
-            eventType: "run_cancelled",
-          });
-          cancelled += 1;
-        } catch (error) {
-          console.warn(
-            `[chitchat-ai] could not cancel stale run ${run.runId}:`,
-            error,
+          return (
+            workflowName.includes("chitchatAiDaemon") ||
+            workflowName.includes("discord-ai") ||
+            workflowName.includes("discordStatsDaemon") ||
+            workflowName.includes("discord-stats")
           );
-        }
-      }
+        });
 
-      cursor = page.hasMore && page.cursor ? page.cursor : undefined;
-    } while (cursor);
+        if (matchingRuns.length) {
+          foundActive = true;
+
+          for (let index = 0; index < matchingRuns.length; index += 10) {
+            const batch = matchingRuns.slice(index, index + 10);
+
+            await Promise.allSettled(
+              batch.map(async (run) => {
+                try {
+                  await world.events.create(run.runId, {
+                    eventType: "run_cancelled",
+                  });
+                  cancelledRunIds.add(run.runId);
+                } catch (error) {
+                  console.warn(
+                    `[chitchat-ai] could not cancel stale run ${run.runId}:`,
+                    error,
+                  );
+                }
+              }),
+            );
+          }
+        }
+
+        cursor = page.cursor ?? undefined;
+      } while (cursor);
+    }
+
+    if (!foundActive) break;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
-  return cancelled;
+  return cancelledRunIds.size;
 }
 
 function setupPage(message = "", isError = false) {
@@ -189,13 +205,21 @@ async function registerWithSecret(suppliedSecret: string | null) {
     // Give this AI daemon a unique lease. The helper creates a fresh active
     // channel whenever the current channel was owned by an older daemon.
     const aiLeaseToken = crypto.randomUUID();
-    const aiChannel = await ensureChitchatAiChatChannel(guildId, aiLeaseToken);
+    const statsLeaseToken = crypto.randomUUID();
+    const aiChannel = await ensureChitchatAiChatChannel(
+      guildId,
+      aiLeaseToken,
+      statsLeaseToken,
+    );
 
     if (!aiChannel) {
       throw new Error("The ╌✦🤖ai-chat channel could not be prepared.");
     }
 
-    const statsRun = await start(discordStatsDaemon, [guildId]);
+    const statsRun = await start(discordStatsDaemon, [
+      guildId,
+      statsLeaseToken,
+    ]);
     const aiRun = await start(chitchatAiDaemon, [aiChannel.id, aiLeaseToken]);
 
     return setupPage(
