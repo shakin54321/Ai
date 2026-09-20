@@ -122,6 +122,38 @@ export async function getDiscordChannelMessage(channelId: string, messageId: str
   return res.json();
 }
 
+export async function getDiscordChannelMessages(
+  channelId: string,
+  options: {limit?: number; after?: string; before?: string} = {},
+) {
+  const params = new URLSearchParams();
+  params.set("limit", String(Math.min(100, Math.max(1, options.limit ?? 50))));
+  if (options.after) params.set("after", options.after);
+  if (options.before) params.set("before", options.before);
+
+  const res = await discordFetch(
+    `/channels/${channelId}/messages?${params.toString()}`,
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord channel messages lookup failed: ${res.status} ${detail}`);
+  }
+
+  return res.json();
+}
+
+export async function getChitchatAiChatChannel(
+  guildId: string,
+): Promise<{id: string; name?: string; type: number} | null> {
+  const channels = await getGuildChannels(guildId);
+  return (
+    channels.find((channel) => {
+      const normalized = normalizeChannelName(channel.name);
+      return normalized.includes("AICHAT");
+    }) ?? null
+  );
+}
+
 export async function editDiscordChannelMessage(
   channelId: string,
   messageId: string,
