@@ -2,6 +2,8 @@ import nacl from "tweetnacl";
 
 const DISCORD_API = "https://discord.com/api/v10";
 const SEND_MESSAGES_PERMISSION = 1n << 11n;
+const VIEW_CHANNEL_PERMISSION = 1n << 10n;
+const READ_MESSAGE_HISTORY_PERMISSION = 1n << 16n;
 
 export function env(name: string): string {
   const value = process.env[name];
@@ -156,12 +158,14 @@ function snowflakeSortOldestFirst<T extends {id: string}>(items: T[]) {
   });
 }
 
-function isAiRelatedChannel(name?: string) {
+function isAiRelatedChannel(name?: string, topic?: string | null) {
   const normalized = normalizeChannelName(name);
+
   return (
     normalized === "AICHAT" ||
     normalized.startsWith("AIARCHIVELEGACY") ||
-    normalized.startsWith("AIDISABLEDLEGACY")
+    normalized.startsWith("AIDISABLEDLEGACY") ||
+    (typeof topic === "string" && topic.startsWith(CHITCHAT_AI_LEASE_PREFIX))
   );
 }
 
@@ -253,8 +257,10 @@ export async function ensureChitchatAiChatChannel(
   leaseToken: string,
 ) {
   const channels = await getGuildChannels(guildId);
-  const activeChannels = channels
-    .filter((channel) => normalizeChannelName(channel.name) === "AICHAT")
+  const botUserId = await getBotUserId();
+
+  const aiChannels = channels
+    .filter((channel) => isAiRelatedChannel(channel.name, channel.topic))
     .sort((a, b) => {
       try {
         return Number(BigInt(a.id) - BigInt(b.id));
@@ -262,51 +268,49 @@ export async function ensureChitchatAiChatChannel(
         return a.id.localeCompare(b.id);
       }
     });
-  const legacyChannels = channels.filter((channel) => {
-    const normalized = normalizeChannelName(channel.name);
-    return normalized.startsWith("AIARCHIVELEGACY") || normalized.startsWith("AIDISABLEDLEGACY");
+
+  const template =
+    aiChannels.find((channel) => normalizeChannelName(channel.name) === "AICHAT") ??
+    aiChannels[aiChannels.length - 1];
+
+  // Always create a brand-new active channel on setup. This guarantees every
+  // old workflow remains attached to an old channel ID and cannot follow the
+  // new channel.
+  const active = await createChitchatAiChatChannel(guildId, template);
+
+  // Explicitly restore the bot's access on the new active channel even when
+  // the copied template contains a legacy bot deny overwrite.
+  const botChannelPermissions =
+    VIEW_CHANNEL_PERMISSION |
+    SEND_MESSAGES_PERMISSION |
+    READ_MESSAGE_HISTORY_PERMISSION;
+
+  await modifyChannelPermission(active.id, botUserId, {
+    allow: botChannelPermissions.toString(),
+    deny: "0",
+    type: 1,
   });
 
-  let active = activeChannels.at(-1);
+  // Fence every previous AI channel. Old workflow runs using those channel
+  // IDs will receive permission errors and stop producing public replies.
+  let disabledIndex = 1;
+  for (const channel of snowflakeSortOldestFirst(aiChannels)) {
+    const disabledName =
+      disabledIndex === 1
+        ? AI_DISABLED_CHANNEL_NAME
+        : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
 
-  // A channel without our lease marker may still belong to an older daemon.
-  // Create a fresh channel so old workflow runs remain fenced to their old IDs.
-  const activeIsManaged =
-    typeof active?.topic === "string" &&
-    active.topic.startsWith(CHITCHAT_AI_LEASE_PREFIX);
+    await modifyChannel(channel.id, {
+      name: disabledName,
+    });
 
-  if (!active || !activeIsManaged) {
-    const template = active ?? legacyChannels[0];
-    active = await createChitchatAiChatChannel(guildId, template);
+    await modifyChannelPermission(channel.id, botUserId, {
+      allow: "0",
+      deny: botChannelPermissions.toString(),
+      type: 1,
+    });
 
-    const oldActiveChannels = activeChannels.filter((channel) => channel.id !== active!.id);
-    const oldAiChannels = [...oldActiveChannels, ...legacyChannels];
-
-    let disabledIndex = 1;
-    for (const channel of snowflakeSortOldestFirst(oldAiChannels)) {
-      const disabledName =
-        disabledIndex === 1
-          ? AI_DISABLED_CHANNEL_NAME
-          : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
-      await modifyChannel(channel.id, {name: disabledName});
-      disabledIndex += 1;
-    }
-  } else {
-    // Keep one canonical active AI channel and fence any extra legacy/active copies.
-    const extras = [
-      ...activeChannels.filter((channel) => channel.id !== active!.id),
-      ...legacyChannels,
-    ];
-
-    let disabledIndex = 1;
-    for (const channel of snowflakeSortOldestFirst(extras)) {
-      const disabledName =
-        disabledIndex === 1
-          ? AI_DISABLED_CHANNEL_NAME
-          : `${AI_DISABLED_CHANNEL_NAME}-${disabledIndex}`;
-      await modifyChannel(channel.id, {name: disabledName});
-      disabledIndex += 1;
-    }
+    disabledIndex += 1;
   }
 
   await modifyChannel(active.id, {
