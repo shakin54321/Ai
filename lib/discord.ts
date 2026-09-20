@@ -144,7 +144,7 @@ export async function getDiscordChannelMessages(
 
 export async function getChitchatAiChatChannel(
   guildId: string,
-): Promise<{id: string; name?: string; type: number} | null> {
+): Promise<{id:string;name?:string;type:number} | null> {
   const channels = await getGuildChannels(guildId);
   return (
     channels.find((channel) => {
@@ -152,6 +152,74 @@ export async function getChitchatAiChatChannel(
       return normalized.includes("AICHAT");
     }) ?? null
   );
+}
+
+const AI_CHAT_LEGACY_NAME = "╌✦🤖ai-archive-legacy";
+
+export async function rotateChitchatAiChatChannel(guildId: string) {
+  const channels = await getGuildChannels(guildId);
+  const active = channels.find(
+    (channel) => normalizeChannelName(channel.name) === "AICHAT",
+  );
+  const legacy = channels.find(
+    (channel) => normalizeChannelName(channel.name) === "AIARCHIVELEGACY",
+  );
+
+  if (active && legacy) return active;
+
+  if (!active) {
+    throw new Error("The ╌✦🤖ai-chat channel was not found in CHITCHAT.");
+  }
+
+  const currentRes = await discordFetch(`/channels/${active.id}`);
+  if (!currentRes.ok) {
+    const detail = await currentRes.text().catch(() => "");
+    throw new Error(`Discord AI channel lookup failed: ${currentRes.status} ${detail}`);
+  }
+
+  const current = await currentRes.json() as {
+    name?: string;
+    type?: number;
+    parent_id?: string | null;
+    position?: number;
+    topic?: string | null;
+    rate_limit_per_user?: number;
+    nsfw?: boolean;
+    permission_overwrites?: Array<{
+      id: string;
+      type: 0 | 1;
+      allow: string;
+      deny: string;
+    }>;
+  };
+
+  await modifyChannel(active.id, {name: AI_CHAT_LEGACY_NAME});
+
+  const createRes = await discordFetch(`/guilds/${guildId}/channels`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: current.name ?? "╌✦🤖ai-chat",
+      type: current.type ?? 0,
+      position: current.position,
+      parent_id: current.parent_id ?? undefined,
+      topic: current.topic ?? undefined,
+      rate_limit_per_user: current.rate_limit_per_user ?? undefined,
+      nsfw: current.nsfw ?? undefined,
+      permission_overwrites: current.permission_overwrites ?? [],
+    }),
+  });
+
+  if (!createRes.ok) {
+    const detail = await createRes.text().catch(() => "");
+    await modifyChannel(active.id, {name: "╌✦🤖ai-chat"}).catch(() => {});
+    throw new Error(`Discord AI channel recreation failed: ${createRes.status} ${detail}`);
+  }
+
+  return await createRes.json() as {
+    id: string;
+    name?: string;
+    type: number;
+  };
 }
 
 export async function editDiscordChannelMessage(
