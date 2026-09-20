@@ -113,6 +113,31 @@ export async function getDonationLogChannelId(guildId: string): Promise<string |
   return matches[0]?.id ?? null;
 }
 
+export async function getDiscordChannelMessage(channelId: string, messageId: string) {
+  const res = await discordFetch(`/channels/${channelId}/messages/${messageId}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord message lookup failed: ${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
+export async function editDiscordChannelMessage(
+  channelId: string,
+  messageId: string,
+  data: Record<string, unknown>,
+) {
+  const res = await discordFetch(`/channels/${channelId}/messages/${messageId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord message update failed: ${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
 export async function sendDonationLog(
   guildId: string,
   data: {
@@ -454,6 +479,12 @@ export async function registerVerifyCommand() {
       name: "stats",
       description: "Refresh the CHITCHAT member and online stats.",
       type: 1,
+      dm_permission: false,
+    },
+    {
+      name: "Approved",
+      description: "",
+      type: 3,
       dm_permission: false,
     },
   ];
