@@ -161,12 +161,6 @@ export async function rotateChitchatAiChatChannel(guildId: string) {
   const active = channels.find(
     (channel) => normalizeChannelName(channel.name) === "AICHAT",
   );
-  const legacy = channels.find(
-    (channel) => normalizeChannelName(channel.name) === "AIARCHIVELEGACY",
-  );
-
-  if (active && legacy) return active;
-
   if (!active) {
     throw new Error("The ╌✦🤖ai-chat channel was not found in CHITCHAT.");
   }
