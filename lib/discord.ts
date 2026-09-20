@@ -152,6 +152,22 @@ export async function modifyChannelPermission(
   }
 }
 
+export async function modifyRole(
+  guildId: string,
+  roleId: string,
+  data: Record<string, unknown>,
+) {
+  const res = await discordFetch(`/guilds/${guildId}/roles/${roleId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord role update failed: ${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
 export async function modifyGuild(
   guildId: string,
   data: Record<string, unknown>,
@@ -252,6 +268,17 @@ export async function syncGuildStats(guildId: string) {
     isAnnouncementChannel(channel.name),
   );
 
+  const protectedRoleNames = new Set([
+    "─.✦ 𐔌 ﾟ.✧ Members ✮⋆˙",
+    "─.✦ 𐔌 ﾟ.✧ Newbie ✮⋆˙",
+    "─.✦ 𐔌 ﾟ.✧ OVERLORD ✮⋆˙",
+    "─.✦ 𐔌 ﾟ.✧ Founder ✮⋆˙",
+    "─.✦ 𐔌 ﾟ.✧ Developer ✮⋆˙",
+    "─.✦ 𐔌 ﾟ.✧ Connections ✮⋆˙",
+    "─.✦ 𐔌 ﾟ.✧ Server Booster ✮⋆˙",
+    "─.✦ 𐔌 ﾟ.✧ Premium ✮⋆˙",
+  ]);
+
   if (!membersChannel) {
     throw new Error("Members counter channel was not found.");
   }
@@ -260,6 +287,19 @@ export async function syncGuildStats(guildId: string) {
   const nextMemberName = memberName.replace(/\d+$/u, String(memberCount));
 
   const updates: Promise<unknown>[] = [];
+
+  const roles = await getGuildRoles(guildId);
+  for (const role of roles) {
+    if (role.managed || !protectedRoleNames.has(role.name)) continue;
+    updates.push(
+      modifyRole(guildId, role.id, {mentionable: false}).catch((error) => {
+        console.warn(
+          `[discord-roles] could not protect role ${role.name} from mentions:`,
+          error,
+        );
+      }),
+    );
+  }
   if (nextMemberName !== memberName) {
     updates.push(modifyChannel(membersChannel.id, {name: nextMemberName}));
   }
