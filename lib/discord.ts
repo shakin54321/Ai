@@ -229,6 +229,11 @@ export async function syncGuildStats(guildId: string) {
         modifyGuild(guildId, {
           system_channel_id: welcomeChannel.id,
           system_channel_flags: currentFlags & ~1,
+        }).catch((error) => {
+          console.warn(
+            "[discord-welcome] could not configure Discord system welcome channel:",
+            error,
+          );
         }),
       );
     }
