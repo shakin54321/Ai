@@ -84,6 +84,75 @@ export async function addRole(guildId: string, userId: string, roleId: string) {
   }
 }
 
+
+export async function sendDiscordChannelMessage(
+  channelId: string,
+  data: Record<string, unknown>,
+) {
+  const res = await discordFetch(`/channels/${channelId}/messages`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord message send failed: ${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
+export async function getDonationLogChannelId(guildId: string): Promise<string | null> {
+  const configured = process.env.DISCORD_DONATION_LOG_CHANNEL_ID?.trim();
+  if (configured) return configured;
+
+  const channels = await getGuildChannels(guildId);
+  const matches = channels.filter((channel) => {
+    const normalized = normalizeChannelName(channel.name);
+    return normalized.includes("DONATION") && normalized.includes("LOG");
+  });
+
+  return matches[0]?.id ?? null;
+}
+
+export async function sendDonationLog(
+  guildId: string,
+  data: {
+    submissionId: string;
+    donorName: string;
+    amount: number;
+    method: "bKash" | "Nagad";
+    transactionId: string;
+    note?: string;
+    submittedAt: string;
+  },
+) {
+  const channelId = await getDonationLogChannelId(guildId);
+  if (!channelId) {
+    throw new Error(
+      "Donation log channel was not found. Create a channel whose name contains both Donation and Log, or set DISCORD_DONATION_LOG_CHANNEL_ID.",
+    );
+  }
+
+  return sendDiscordChannelMessage(channelId, {
+    embeds: [{
+      author: {name: "✦ CHITCHAT DONATIONS"},
+      title: "NEW DONATION • PENDING REVIEW",
+      description:
+        "A donation was submitted through the official donation website. Please verify the transaction in the receiving wallet before treating it as confirmed.",
+      color: 0xa855f7,
+      fields: [
+        {name: "DONOR", value: data.donorName, inline: true},
+        {name: "AMOUNT", value: `৳${data.amount.toLocaleString("en-BD")}`, inline: true},
+        {name: "METHOD", value: data.method, inline: true},
+        {name: "TRANSACTION ID", value: data.transactionId, inline: false},
+        {name: "SUBMISSION ID", value: data.submissionId, inline: true},
+        {name: "NOTE", value: data.note?.trim() || "No note provided.", inline: true},
+      ],
+      footer: {text: `CHITCHAT • Donation submitted • ${data.submittedAt}`},
+    }],
+    allowed_mentions: {parse: []},
+  });
+}
+
 export async function removeRole(guildId: string, userId: string, roleId: string) {
   const res = await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
     method: "DELETE",
