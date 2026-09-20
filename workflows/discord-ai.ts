@@ -93,17 +93,20 @@ function sortOldestFirst(messages: DiscordMessage[]) {
 function buildHistory(
   messages: DiscordMessage[],
   botUserId: string,
+  currentMessageId: string,
 ): ChitchatAIMessage[] {
   return sortOldestFirst(messages)
     .filter(
       (message) =>
-        typeof message.content === 'string' && message.content.trim(),
+        message.id !== currentMessageId &&
+        typeof message.content === 'string' &&
+        message.content.trim(),
     )
     .slice(-10)
     .map((message) => {
       const content = message.content!.trim();
 
-      if (message.author?.id === botUserId || message.author?.bot) {
+      if (message.author?.id === botUserId) {
         return {
           role: 'assistant',
           content,
@@ -162,7 +165,7 @@ export async function chitchatAiDaemon(guildId: string) {
         }
 
         const history = (await getHistoryStep(channel.id)) as DiscordMessage[];
-        const aiMessages = buildHistory(history, botUserId);
+        const aiMessages = buildHistory(history, botUserId, message.id);
 
         // The just-received message is the user turn being answered.
         aiMessages.push({
@@ -198,6 +201,6 @@ export async function chitchatAiDaemon(guildId: string) {
       console.error('[chitchat-ai] polling failed:', error);
     }
 
-    await sleep('3s');
+    await sleep('5s');
   }
 }
