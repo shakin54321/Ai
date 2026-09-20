@@ -191,20 +191,50 @@ export async function chitchatAiDaemon(
           continue;
         }
 
-        if (typeof message.content !== 'string' || !message.content.trim()) {
-          console.warn(
-            '[chitchat-ai] message content is unavailable. Enable MESSAGE_CONTENT in Discord Developer Portal > Bot > Privileged Gateway Intents.',
-          );
+        // No MESSAGE_CONTENT privileged intent is required for messages that
+        // explicitly mention the app. Discord exposes the content for those
+        // messages, so this is the privacy-safe trigger for CHITCHAT AI.
+        const content = typeof message.content === 'string'
+          ? message.content.trim()
+          : '';
+
+        if (!content) {
+          continue;
+        }
+
+        const mentionForms = [
+          `<@${botUserId}>`,
+          `<@!${botUserId}>`,
+        ];
+        const isBotMentioned = mentionForms.some((mention) =>
+          content.includes(mention),
+        );
+
+        if (!isBotMentioned) {
+          continue;
+        }
+
+        const prompt = content
+          .replaceAll(`<@${botUserId}>`, '')
+          .replaceAll(`<@!${botUserId}>`, '')
+          .trim();
+
+        if (!prompt) {
+          await sendReplyStep(
+            channel.id,
+            message.id,
+            message.author.id,
+            'Hi! Mention me and add your question, for example: @CHITCHAT AI What can you help me with?',
+          ).catch(() => {});
           continue;
         }
 
         const history = (await getHistoryStep(channel.id)) as DiscordMessage[];
         const aiMessages = buildHistory(history, botUserId, message.id);
 
-        // The just-received message is the user turn being answered.
         aiMessages.push({
           role: 'user',
-          content: message.content.trim(),
+          content: prompt,
         });
 
         try {
