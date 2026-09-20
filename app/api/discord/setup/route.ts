@@ -82,7 +82,7 @@ function setupPage(message = "", isError = false) {
 <body>
   <main class="card">
     <h1>CHITCHAT AI Setup</h1>
-    <p>Enter your private setup secret to register the <code>/verify</code> command and start automatic server statistics sync.</p>
+    <p>Enter your private setup secret to register <code>/verify</code>, <code>/stats</code>, the donation <code>Approved</code> message action, and start automatic server statistics sync.</p>
     <form method="post">
       <input
         name="key"
@@ -133,7 +133,7 @@ async function registerWithSecret(suppliedSecret: string | null) {
       : "Announcement channels not found.";
 
     return setupPage(
-      `Success. /verify and /stats were registered.
+      `Success. /verify, /stats, and Approved were registered.
 
 Registered commands: ${commandNames || "/verify, /stats"}
 Application ID: ${env("DISCORD_CLIENT_ID")}
