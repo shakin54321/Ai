@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
-import { env, findChitchatGuildId, registerVerifyCommand } from "@/lib/discord";
+import {
+  env,
+  findChitchatGuildId,
+  registerVerifyCommand,
+  syncGuildStats,
+} from "@/lib/discord";
 import { discordStatsDaemon } from "@/workflows/discord-stats";
 
 export const runtime = "nodejs";
@@ -114,8 +119,18 @@ async function registerWithSecret(suppliedSecret: string | null) {
       .map((item: any) => (item?.name ? `/${item.name}` : null))
       .filter(Boolean)
       .join(", ");
+
     const guildId = await findChitchatGuildId();
+
+    // Apply the latest Discord channel configuration immediately.
+    // This also keeps the existing stats/welcome/verification behavior intact.
+    const synced = await syncGuildStats(guildId);
+
     const run = await start(discordStatsDaemon, [guildId]);
+
+    const announcementStatus = synced.announcementChannelIds?.length
+      ? `Announcement channels configured: ${synced.announcementChannelNames.join(", ")}`
+      : "Announcement channels not found.";
 
     return setupPage(
       `Success. /verify and /stats were registered.
@@ -126,6 +141,7 @@ Guild ID: ${guildId}
 Automation: ACTIVE
 Workflow Run: ${run.runId}
 
+${announcementStatus}
 Member count and online status sync every 60 seconds using Vercel Workflow.`,
       false,
     );
