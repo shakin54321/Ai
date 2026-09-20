@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { env, registerVerifyCommand } from "@/lib/discord";
+import { start } from "workflow/api";
+import { env, findChitchatGuildId, registerVerifyCommand } from "@/lib/discord";
+import { discordStatsDaemon } from "@/workflows/discord-stats";
 
 export const runtime = "nodejs";
 
@@ -75,7 +77,7 @@ function setupPage(message = "", isError = false) {
 <body>
   <main class="card">
     <h1>CHITCHAT AI Setup</h1>
-    <p>Enter your private setup secret to register the <code>/verify</code> command.</p>
+    <p>Enter your private setup secret to register the <code>/verify</code> command and start automatic server statistics sync.</p>
     <form method="post">
       <input
         name="key"
@@ -84,7 +86,7 @@ function setupPage(message = "", isError = false) {
         placeholder="Setup secret"
         required
       />
-      <button type="submit">Register /verify</button>
+      <button type="submit">Register / Start Automation</button>
     </form>
     ${safeMessage ? `<div class="msg">${safeMessage}</div>` : ""}
     <p class="hint">Your setup secret is only used to authorize this setup action. Never share it in chat.</p>
@@ -107,12 +109,20 @@ async function registerWithSecret(suppliedSecret: string | null) {
 
   try {
     const command = await registerVerifyCommand();
+    const guildId = await findChitchatGuildId();
+    const run = await start(discordStatsDaemon, [guildId]);
+
     return setupPage(
-      `Success. /verify was registered.
+      `Success. /verify and /stats were registered.
 
 Command ID: ${command.id}
 Name: ${command.name}
-Application ID: ${env("DISCORD_CLIENT_ID")}`,
+Application ID: ${env("DISCORD_CLIENT_ID")}
+Guild ID: ${guildId}
+Automation: ACTIVE
+Workflow Run: ${run.runId}
+
+Member count and online status sync every 30 seconds using Vercel Workflow.`,
       false,
     );
   } catch (error) {
@@ -124,7 +134,6 @@ Application ID: ${env("DISCORD_CLIENT_ID")}`,
 export async function GET(request: NextRequest) {
   const suppliedSecret = request.nextUrl.searchParams.get("key");
 
-  // Keep the old query-key method working for direct links.
   if (suppliedSecret !== null) {
     return registerWithSecret(suppliedSecret);
   }
