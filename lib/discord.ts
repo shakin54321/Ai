@@ -86,6 +86,67 @@ export async function getGuildRoles(guildId: string): Promise<Array<{id:string;n
   return res.json();
 }
 
+export async function createGuildChannel(
+  guildId: string,
+  data: Record<string, unknown>,
+) {
+  const res = await discordFetch(`/guilds/${guildId}/channels`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord channel creation failed: ${res.status} ${detail}`);
+  }
+  return res.json() as Promise<{
+    id: string;
+    name?: string;
+    type: number;
+    topic?: string | null;
+  }>;
+}
+
+export async function createGuildRole(
+  guildId: string,
+  data: {
+    name: string;
+    color?: number;
+    hoist?: boolean;
+    mentionable?: boolean;
+    permissions?: string;
+    reason?: string;
+  },
+) {
+  const auditReason = data.reason?.trim().slice(0, 512);
+  const headers = auditReason
+    ? {"X-Audit-Log-Reason": encodeURIComponent(auditReason)}
+    : undefined;
+
+  const res = await discordFetch(`/guilds/${guildId}/roles`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: data.name,
+      color: data.color ?? 0,
+      hoist: data.hoist ?? false,
+      mentionable: data.mentionable ?? false,
+      permissions: data.permissions ?? "0",
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Discord role creation failed: ${res.status} ${detail}`);
+  }
+  return res.json() as Promise<{
+    id: string;
+    name: string;
+    position: number;
+    managed: boolean;
+    mentionable?: boolean;
+  }>;
+}
+
 export async function getBotUserId(): Promise<string> {
   const res = await discordFetch("/users/@me");
   if (!res.ok) throw new Error(`Discord bot lookup failed: ${res.status}`);
