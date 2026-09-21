@@ -327,11 +327,11 @@ export async function setupLevelSystem(guildId: string) {
       (1n << 9n)  | // Stream
       (1n << 10n) | // View Channel
       (1n << 11n) | // Send Messages
-      (1n << 13n) | // Embed Links
-      (1n << 14n) | // Attach Files
+      (1n << 14n) | // Embed Links
+      (1n << 15n) | // Attach Files
       (1n << 16n) | // Read Message History
-      (1n << 17n) | // Mention Everyone
-      (1n << 25n)    // Use Application Commands
+      (1n << 18n) | // Use External Emojis
+      (1n << 31n)   // Use Application Commands
     ).toString();
 
   const levelRoles: Array<{level: number; id: string}> = [];
@@ -342,7 +342,8 @@ export async function setupLevelSystem(guildId: string) {
     const wantedColor = levelRoleColor(level);
     const role = existing
       ? (
-          existing.color !== wantedColor
+          existing.color !== wantedColor ||
+          existing.permissions !== STANDARD_LEVEL_ROLE_PERMISSIONS
             ? await modifyRole(guildId, existing.id, {
                 name,
                 color: wantedColor,
