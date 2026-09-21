@@ -323,17 +323,22 @@ export async function setupLevelSystem(guildId: string) {
     const name = levelRoleName(level);
     const existing = roles.find((role) => role.name === name);
 
+    const wantedColor = levelRoleColor(level);
     const role = existing
-      ? await modifyRole(guildId, existing.id, {
-          name,
-          color: levelRoleColor(level),
-          hoist: false,
-          mentionable: false,
-          permissions: "0",
-        })
+      ? (
+          existing.color !== wantedColor
+            ? await modifyRole(guildId, existing.id, {
+                name,
+                color: wantedColor,
+                hoist: false,
+                mentionable: false,
+                permissions: "0",
+              })
+            : existing
+        )
       : await createGuildRole(guildId, {
           name,
-          color: levelRoleColor(level),
+          color: wantedColor,
           hoist: false,
           mentionable: false,
           permissions: "0",
