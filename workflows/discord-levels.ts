@@ -76,7 +76,7 @@ function avatarUrl(userId: string, avatar?: string | null) {
   return `https://cdn.discordapp.com/avatars/${userId}/${avatar}.${extension}?size=256`;
 }
 
-async function bootstrapStep(guildId: string) {
+async function bootstrapStep(guildId: string): Promise<RuntimeState> {
   "use step";
 
   await setupLevelSystem(guildId);
