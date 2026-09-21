@@ -73,7 +73,7 @@ function isCountableChannel(channel: any) {
 
 function avatarUrl(userId: string, avatar?: string | null) {
   if (!avatar) return null;
-  if (/^https?:\\/\\//i.test(avatar)) return avatar;
+  if (avatar.startsWith("http://") || avatar.startsWith("https://")) return avatar;
   const extension = avatar.startsWith("a_") ? "gif" : "png";
   return `https://cdn.discordapp.com/avatars/${userId}/${avatar}.${extension}?size=256`;
 }
