@@ -247,9 +247,7 @@ AI Workflow Run: ${aiRun.runId}
 Existing verification, member count, online status, welcome, and announcement automation remains active and was not changed.`,
       false,
     );
-Existing verification, member count, online status, welcome, and announcement automation remains active and was not changed.`,
-      false,
-    );
+
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return setupPage(`Registration failed.\n\n${message}`, true);
