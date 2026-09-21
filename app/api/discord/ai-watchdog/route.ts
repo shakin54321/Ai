@@ -19,7 +19,9 @@ function authorized(request: NextRequest) {
   return request.headers.get('authorization') === 'Bearer ' + cronSecret;
 }
 
-function sortNewestFirst(messages: Array<{id: string}>) {
+type WatchdogMessage = { id: string; author?: { id?: string; bot?: boolean } };
+
+function sortNewestFirst(messages: WatchdogMessage[]) {
   return [...messages].sort((a, b) => {
     try {
       return Number(BigInt(b.id) - BigInt(a.id));
