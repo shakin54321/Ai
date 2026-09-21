@@ -13,8 +13,8 @@ import {
   getGuildMember,
   getGuildRoles,
   removeRole,
-  verifyDiscordSignature,
 } from "@/lib/discord";
+import { verifyDiscordSignature } from "@/lib/discord-signature";
 import { generateChitchatAI, type ChitchatAIMessage } from "@/lib/ai";
 import {
   buildLevelRolePanel,
