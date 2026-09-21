@@ -175,11 +175,17 @@ export async function chitchatAiDaemon(
   }
 
   const botUserId = await getBotUserIdStep();
-  const initialMessages = (await getRecentMessagesStep(
+  const initialPoll = await pollAiMessagesStep(
     channel.id,
     null,
-  )) as DiscordMessage[];
-  const initialSorted = sortOldestFirst(initialMessages);
+    leaseToken,
+  );
+
+  if (!initialPoll.active) {
+    return;
+  }
+
+  const initialSorted = sortOldestFirst(initialPoll.messages);
 
   // Start after the latest existing message so enabling the daemon never
   // causes the bot to reply to old messages.
@@ -286,15 +292,13 @@ export async function chitchatAiDaemon(
 
           // Keep the public error message intentionally generic so secrets
           // or provider details never leak into the Discord channel.
-          if (await isAiLeaseCurrentStep(channel.id, leaseToken)) {
-            await sendReplyIfLeaseCurrentStep(
-              channel.id,
-              message.id,
-              message.author.id,
-              'I could not generate a response right now. Please try again in a moment.',
-              leaseToken,
-            ).catch(() => {});
-          }
+          await sendReplyIfLeaseCurrentStep(
+            channel.id,
+            message.id,
+            message.author.id,
+            'I could not generate a response right now. Please try again in a moment.',
+            leaseToken,
+          ).catch(() => {});
         }
       }
     } catch (error) {
