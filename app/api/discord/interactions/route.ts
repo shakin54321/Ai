@@ -16,6 +16,12 @@ import {
   verifyDiscordSignature,
 } from "@/lib/discord";
 import { generateChitchatAI, type ChitchatAIMessage } from "@/lib/ai";
+import {
+  buildLevelRolePanel,
+  levelFromRoleName,
+  levelFromXp,
+  readLevelStore,
+} from "@/lib/level-system";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -188,6 +194,52 @@ export async function POST(request: NextRequest) {
     });
 
     return response;
+  }
+
+  // /leaderboard is public.
+  if (interaction.type === 2 && interaction.data?.name === "leaderboard") {
+    try {
+      const stored = await readLevelStore(guildId);
+      const sorted = [...stored.users.values()]
+        .sort(
+          (a, b) =>
+            b.xp - a.xp ||
+            b.messages - a.messages ||
+            a.userId.localeCompare(b.userId),
+        )
+        .slice(0, 10);
+
+      const description = sorted.length
+        ? sorted.map((user, index) => {
+            const level = levelFromXp(user.xp);
+            return `**#${index + 1}** <@${user.userId}> — Level **${level}** • **${user.xp.toLocaleString("en-US")} XP**`;
+          }).join("\n")
+        : "No XP has been earned yet. Start chatting to appear here.";
+
+      return json({
+        type: 4,
+        data: {
+          embeds: [{
+            title: "LIVE LEADERBOARD",
+            description,
+            color: 0xa855f7,
+            footer: {text: "CHITCHAT • XP Leaderboard"},
+          }],
+        },
+      });
+    } catch (error) {
+      return json({
+        type: 4,
+        data: {
+          embeds: [embed(
+            "LEADERBOARD UNAVAILABLE",
+            error instanceof Error ? error.message : "The XP leaderboard is unavailable right now.",
+            {color: 0xef4444, footer: "CHITCHAT • Level System"},
+          )],
+          flags: 64,
+        },
+      });
+    }
   }
 
   // All slash commands are owner-only. /verify is also owner-only:
@@ -436,6 +488,182 @@ export async function POST(request: NextRequest) {
           flags:64,
         },
       });
+    }
+  }
+
+  // Level role center pagination and role claiming.
+  if (interaction.type === 3 && typeof interaction.data?.custom_id === "string") {
+    const customId = interaction.data.custom_id as string;
+
+    if (customId.startsWith("chitchat:level-page:")) {
+      try {
+        const channels = await getGuildChannels(guildId);
+        const getRoleChannel = channels.find((channel) =>
+          (channel.name ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "") ===
+          "GETROLE",
+        );
+
+        if (!getRoleChannel || interaction.channel_id !== getRoleChannel.id) {
+          return json({
+            type: 4,
+            data: {
+              embeds: [embed(
+                "WRONG CHANNEL",
+                "Use the level role buttons inside the level role center.",
+                {color: 0xef4444, footer: "CHITCHAT • Level System"},
+              )],
+              flags: 64,
+            },
+          });
+        }
+
+        const pageValue = customId.slice("chitchat:level-page:".length);
+        const page = Number(pageValue);
+        if (!Number.isInteger(page) || page < 0 || page > 4) {
+          return json({
+            type: 4,
+            data: {
+              embeds: [embed("INVALID PAGE", "That level page is not valid.", {color: 0xef4444})],
+              flags: 64,
+            },
+          });
+        }
+
+        const roles = await getGuildRoles(guildId);
+        const levelRoles = roles
+          .map((role) => ({level: levelFromRoleName(role.name), id: role.id}))
+          .filter((role) => role.level >= 1 && role.level <= 100)
+          .sort((a, b) => a.level - b.level);
+
+        return json({
+          type: 7,
+          data: buildLevelRolePanel(page, levelRoles),
+        });
+      } catch (error) {
+        return json({
+          type: 4,
+          data: {
+            embeds: [embed(
+              "LEVEL PANEL ERROR",
+              error instanceof Error ? error.message : "The level role panel could not be updated.",
+              {color: 0xef4444, footer: "CHITCHAT • Level System"},
+            )],
+            flags: 64,
+          },
+        });
+      }
+    }
+
+    if (customId.startsWith("chitchat:level-claim:")) {
+      const roleId = customId.slice("chitchat:level-claim:".length);
+      const userId = getInteractionUserId(interaction);
+
+      if (!userId || !roleId) {
+        return json({
+          type: 4,
+          data: {
+            embeds: [embed("ROLE CLAIM FAILED", "Your Discord account could not be identified.", {color: 0xef4444})],
+            flags: 64,
+          },
+        });
+      }
+
+      try {
+        const channels = await getGuildChannels(guildId);
+        const getRoleChannel = channels.find((channel) =>
+          (channel.name ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "") ===
+          "GETROLE",
+        );
+
+        if (!getRoleChannel || interaction.channel_id !== getRoleChannel.id) {
+          throw new Error("Use the buttons inside the level role center.");
+        }
+
+        const roles = await getGuildRoles(guildId);
+        const targetRole = roles.find((role) => role.id === roleId);
+        const targetLevel = levelFromRoleName(targetRole?.name);
+
+        if (!targetRole || targetLevel < 1 || targetLevel > 100) {
+          throw new Error("That is not a valid CHITCHAT level role.");
+        }
+
+        const stored = await readLevelStore(guildId);
+        const user = stored.users.get(userId) ?? {
+          userId,
+          xp: 0,
+          messages: 0,
+          displayName: "Member",
+          avatar: null,
+        };
+        const currentLevel = levelFromXp(user.xp);
+
+        if (currentLevel < targetLevel) {
+          throw new Error(
+            `You need **${targetRole.name ? "" : ""}${targetLevel === 1 ? 100 : targetLevel}** level access first.`,
+          );
+        }
+
+        if (currentLevel !== targetLevel) {
+          throw new Error(
+            `Your current level is **Level ${currentLevel}**. Claim your current level role instead.`,
+          );
+        }
+
+        const botUserId = await getBotUserId();
+        const botMember = await getGuildMember(guildId, botUserId);
+        const botRoleIds: string[] = botMember.roles ?? [];
+        const botTopRolePosition = Math.max(
+          0,
+          ...roles
+            .filter((role) => botRoleIds.includes(role.id))
+            .map((role) => role.position),
+        );
+
+        if (targetRole.position >= botTopRolePosition) {
+          throw new Error("The bot's highest role must be above the level roles.");
+        }
+
+        const member = await getGuildMember(guildId, userId);
+        const currentRoleIds: string[] = member.roles ?? [];
+        const existingLevelRoles = roles.filter(
+          (role) => levelFromRoleName(role.name) >= 1 && levelFromRoleName(role.name) <= 100,
+        );
+
+        for (const role of existingLevelRoles) {
+          if (role.id !== targetRole.id && currentRoleIds.includes(role.id)) {
+            await removeRole(guildId, userId, role.id);
+          }
+        }
+
+        if (!currentRoleIds.includes(targetRole.id)) {
+          await addRole(guildId, userId, targetRole.id);
+        }
+
+        return json({
+          type: 4,
+          data: {
+            embeds: [embed(
+              "LEVEL ROLE CLAIMED",
+              `You claimed <@&${targetRole.id}> for **Level ${currentLevel}**.`,
+              {color: targetRole.color ?? 0xa855f7, footer: "CHITCHAT • Level System"},
+            )],
+            allowed_mentions: {roles: []},
+            flags: 64,
+          },
+        });
+      } catch (error) {
+        return json({
+          type: 4,
+          data: {
+            embeds: [embed(
+              "ROLE CLAIM FAILED",
+              error instanceof Error ? error.message : "The level role could not be claimed.",
+              {color: 0xef4444, footer: "CHITCHAT • Level System"},
+            )],
+            flags: 64,
+          },
+        });
+      }
     }
   }
 
