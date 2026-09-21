@@ -35,26 +35,12 @@ async function isAiLeaseCurrentStep(channelId: string, leaseToken: string) {
   return (channel.topic ?? "") === `${CHITCHAT_AI_LEASE_PREFIX}${leaseToken}`;
 }
 
-async function pollAiMessagesStep(
-  channelId: string,
-  after: string | null,
-  leaseToken: string,
-) {
+async function getRecentMessagesStep(channelId: string, after?: string | null) {
   'use step';
-
-  const channel = await getDiscordChannel(channelId);
-  const active = (channel?.topic ?? "") === \`${CHITCHAT_AI_LEASE_PREFIX}\${leaseToken}\`;
-
-  if (!active) {
-    return {active: false, messages: [] as DiscordMessage[]};
-  }
-
-  const messages = (await getDiscordChannelMessages(channelId, {
+  return await getDiscordChannelMessages(channelId, {
     limit: 50,
     after: after ?? undefined,
-  })) as DiscordMessage[];
-
-  return {active: true, messages};
+  });
 }
 
 async function getHistoryStep(channelId: string) {
@@ -67,19 +53,13 @@ async function generateReplyStep(messages: ChitchatAIMessage[]) {
   return await generateChitchatAI(messages);
 }
 
-async function sendReplyIfLeaseCurrentStep(
+async function sendReplyStep(
   channelId: string,
   messageId: string,
   userId: string,
   responseText: string,
-  leaseToken: string,
 ) {
   'use step';
-
-  const channel = await getDiscordChannel(channelId);
-  if ((channel?.topic ?? "") !== \`${CHITCHAT_AI_LEASE_PREFIX}\${leaseToken}\`) {
-    return false;
-  }
 
   const chunks: string[] = [];
   for (let index = 0; index < responseText.length; index += 1900) {
@@ -105,8 +85,6 @@ async function sendReplyIfLeaseCurrentStep(
             },
     });
   }
-
-  return true;
 }
 
 function sortOldestFirst(messages: DiscordMessage[]) {
@@ -175,35 +153,26 @@ export async function chitchatAiDaemon(
   }
 
   const botUserId = await getBotUserIdStep();
-  const initialPoll = await pollAiMessagesStep(
+  const initialMessages = (await getRecentMessagesStep(
     channel.id,
     null,
-    leaseToken,
-  );
-
-  if (!initialPoll.active) {
-    return;
-  }
-
-  const initialSorted = sortOldestFirst(initialPoll.messages);
+  )) as DiscordMessage[];
+  const initialSorted = sortOldestFirst(initialMessages);
 
   // Start after the latest existing message so enabling the daemon never
   // causes the bot to reply to old messages.
   let lastSeenMessageId = initialSorted.at(-1)?.id ?? null;
 
   while (true) {
+    if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
+      return;
+    }
+
     try {
-      const poll = await pollAiMessagesStep(
+      const messages = (await getRecentMessagesStep(
         channel.id,
         lastSeenMessageId,
-        leaseToken,
-      );
-
-      if (!poll.active) {
-        return;
-      }
-
-      const messages = poll.messages;
+      )) as DiscordMessage[];
 
       if (messages.length > 0) {
         console.log(
@@ -241,12 +210,11 @@ export async function chitchatAiDaemon(
           .trim();
 
         if (!prompt) {
-          await sendReplyIfLeaseCurrentStep(
+          await sendReplyStep(
             channel.id,
             message.id,
             message.author.id,
             'Hi! Send me your question or message here and I will help you.',
-            leaseToken,
           ).catch(() => {});
           continue;
         }
@@ -262,17 +230,16 @@ export async function chitchatAiDaemon(
         try {
           const answer = await generateReplyStep(aiMessages);
 
-          const sent = await sendReplyIfLeaseCurrentStep(
+          if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
+            return;
+          }
+
+          await sendReplyStep(
             channel.id,
             message.id,
             message.author.id,
             answer,
-            leaseToken,
           );
-
-          if (!sent) {
-            return;
-          }
         } catch (error) {
           let detail = 'Unknown AI error';
 
@@ -292,13 +259,14 @@ export async function chitchatAiDaemon(
 
           // Keep the public error message intentionally generic so secrets
           // or provider details never leak into the Discord channel.
-          await sendReplyIfLeaseCurrentStep(
-            channel.id,
-            message.id,
-            message.author.id,
-            'I could not generate a response right now. Please try again in a moment.',
-            leaseToken,
-          ).catch(() => {});
+          if (await isAiLeaseCurrentStep(channel.id, leaseToken)) {
+            await sendReplyStep(
+              channel.id,
+              message.id,
+              message.author.id,
+              'I could not generate a response right now. Please try again in a moment.',
+            ).catch(() => {});
+          }
         }
       }
     } catch (error) {
