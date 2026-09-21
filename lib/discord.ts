@@ -51,7 +51,7 @@ export async function getGuildChannels(guildId: string): Promise<Array<{id:strin
   return res.json();
 }
 
-export async function getGuildRoles(guildId: string): Promise<Array<{id:string;name:string;position:number;managed:boolean;mentionable?:boolean;color?:number}>> {
+export async function getGuildRoles(guildId: string): Promise<Array<{id:string;name:string;position:number;managed:boolean;mentionable?:boolean;color?:number;permissions?:string}>> {
   const res = await discordFetch(`/guilds/${guildId}/roles`);
   if (!res.ok) throw new Error(`Discord roles lookup failed: ${res.status}`);
   return res.json();
@@ -115,6 +115,8 @@ export async function createGuildRole(
     position: number;
     managed: boolean;
     mentionable?: boolean;
+    permissions?: string;
+    color?: number;
   }>;
 }
 
