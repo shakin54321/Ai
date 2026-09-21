@@ -2,11 +2,9 @@ import { sleep } from "workflow";
 import {
   LEVEL_DATA_PREFIX,
   LEVEL_DATA_CHANNEL_NAME,
-  LEVEL_ROLE_STYLE,
   LEADERBOARD_CHANNEL_NAME,
   LEVEL_UP_CHANNEL_NAME,
   GET_ROLE_CHANNEL_NAME,
-  buildLevelRolePanel,
   levelFromXp,
   levelRoleName,
   readLevelStore,
@@ -18,7 +16,7 @@ import {
   getBotUserId,
   getDiscordChannelMessages,
   getGuildChannels,
-  getGuildMember,
+  getGuildRoles,
   sendDiscordChannelMessage,
 } from "@/lib/discord";
 
@@ -62,20 +60,29 @@ function normalize(name?: string | null) {
 function isCountableChannel(channel: any) {
   if (typeof channel?.name !== "string" || channel.type !== 0) return false;
   const normalized = normalize(channel.name);
+
   if (STATIC_CHANNELS.has(normalized)) return false;
   if (normalized.startsWith("MEMBERS") && /\d+$/.test(normalized)) return false;
   if (normalized.includes("STATUS") && normalized.includes("ONLINE")) return false;
   if (normalized.includes("DONATION") && normalized.includes("LOG")) return false;
+
   return true;
 }
 
+function avatarUrl(userId: string, avatar?: string | null) {
+  if (!avatar) return null;
+  const extension = avatar.startsWith("a_") ? "gif" : "png";
+  return `https://cdn.discordapp.com/avatars/${userId}/${avatar}.${extension}?size=256`;
+}
+
 async function bootstrapStep(guildId: string) {
-  'use step';
+  "use step";
 
   const channels = await getGuildChannels(guildId);
-  const botUserId = await getBotUserId();
+  const dataChannel = channels.find(
+    (channel) => normalize(channel.name) === normalize(LEVEL_DATA_CHANNEL_NAME),
+  );
 
-  let dataChannel = channels.find((channel) => normalize(channel.name) === normalize(LEVEL_DATA_CHANNEL_NAME));
   if (!dataChannel) {
     throw new Error("Level data channel is missing. Run the setup page again.");
   }
@@ -88,22 +95,14 @@ async function bootstrapStep(guildId: string) {
     cursors[channel.id] = messages[0]?.id ?? "";
   }
 
-  const dataMessageIds: Record<string, string> = {};
-  const dataMessages = await getDiscordChannelMessages(dataChannel.id, {limit: 100}) as DiscordMessage[];
-  for (const message of dataMessages) {
-    if (message.author?.id !== botUserId || typeof message.content !== "string") continue;
-    if (!message.content.startsWith(LEVEL_DATA_PREFIX)) continue;
-    try {
-      const record = JSON.parse(message.content.slice(LEVEL_DATA_PREFIX.length));
-      if (typeof record?.userId === "string") {
-        dataMessageIds[record.userId] = message.id;
-      }
-    } catch {}
-  }
-
   const users: Record<string, StoredLevelUser> = {};
   for (const [userId, user] of stored.users.entries()) {
     users[userId] = user;
+  }
+
+  const dataMessageIds: Record<string, string> = {};
+  for (const [userId, messageId] of stored.messageIds.entries()) {
+    dataMessageIds[userId] = messageId;
   }
 
   return {
@@ -119,7 +118,7 @@ async function fetchNewMessagesStep(
   guildId: string,
   cursors: Record<string, string>,
 ) {
-  'use step';
+  "use step";
 
   const channels = await getGuildChannels(guildId);
   const nextCursors = {...cursors};
@@ -127,8 +126,8 @@ async function fetchNewMessagesStep(
 
   for (const channel of channels.filter(isCountableChannel)) {
     const previous = cursors[channel.id] || undefined;
-    let fetched = 0;
     let cursor = previous;
+    let fetched = 0;
 
     for (let page = 0; page < 3; page += 1) {
       const batch = await getDiscordChannelMessages(channel.id, {
@@ -151,6 +150,7 @@ async function fetchNewMessagesStep(
       }).at(-1)?.id;
 
       fetched += batch.length;
+
       if (batch.length < 100 || fetched >= 300) break;
     }
 
@@ -169,6 +169,7 @@ function makeProgress(xp: number) {
     ? 1
     : Math.max(0, Math.min(1, (xp - currentFloor) / span));
   const filled = currentLevel >= 100 ? 12 : Math.round(ratio * 12);
+
   return {
     currentLevel,
     nextLevel: currentLevel < 100 ? currentLevel + 1 : 100,
@@ -183,7 +184,7 @@ async function persistUserStep(
   user: StoredLevelUser,
   messageId?: string,
 ) {
-  'use step';
+  "use step";
 
   const content =
     LEVEL_DATA_PREFIX +
@@ -200,7 +201,7 @@ async function persistUserStep(
       await editDiscordChannelMessage(dataChannelId, messageId, {content});
       return messageId;
     } catch {
-      // Fall through and recreate the record if it was deleted.
+      // Recreate the record if it was removed manually.
     }
   }
 
@@ -208,15 +209,32 @@ async function persistUserStep(
     content,
     allowed_mentions: {parse: []},
   });
+
   return created.id as string;
 }
 
+async function getLevelRoleStep(guildId: string, level: number) {
+  "use step";
+
+  const roles = await getGuildRoles(guildId);
+  const role = roles.find((item) => item.name === levelRoleName(level));
+
+  if (!role) {
+    throw new Error(`Level role for Level ${level} is missing. Run the setup page again.`);
+  }
+
+  return role;
+}
+
 async function sendLevelUpStep(
+  guildId: string,
   channelId: string,
   user: StoredLevelUser,
   newLevel: number,
 ) {
-  'use step';
+  "use step";
+
+  const role = await getLevelRoleStep(guildId, newLevel);
 
   await sendDiscordChannelMessage(channelId, {
     content: `<@${user.userId}>`,
@@ -226,11 +244,11 @@ async function sendLevelUpStep(
         `You reached **Level ${newLevel}**.`,
         "",
         `Required XP: **${xpForLevel(newLevel).toLocaleString("en-US")} XP**`,
-        `Role unlocked: <@&LEVEL_ROLE_PLACEHOLDER>`,
+        `Unlocked role: <@&${role.id}>`,
         "",
-        "Open the level role center and claim your level role.",
+        "Go to the level role center and claim your unlocked role.",
       ].join("\n"),
-      color: 0xa855f7,
+      color: role.color ?? 0xa855f7,
       footer: {text: "CHITCHAT • Level System"},
     }],
     allowed_mentions: {users: [user.userId]},
@@ -241,8 +259,10 @@ async function findLeaderboardMessageStep(
   channelId: string,
   botUserId: string,
 ) {
-  'use step';
+  "use step";
+
   const messages = await getDiscordChannelMessages(channelId, {limit: 100}) as Array<any>;
+
   return messages.find(
     (message) =>
       message.author?.id === botUserId &&
@@ -251,16 +271,20 @@ async function findLeaderboardMessageStep(
 }
 
 async function updateLeaderboardStep(
-  guildId: string,
   channelId: string,
   messageId: string | undefined,
   users: StoredLevelUser[],
   botUserId: string,
 ) {
-  'use step';
+  "use step";
 
   const sorted = [...users]
-    .sort((a, b) => b.xp - a.xp || b.messages - a.messages || a.userId.localeCompare(b.userId))
+    .sort(
+      (a, b) =>
+        b.xp - a.xp ||
+        b.messages - a.messages ||
+        a.userId.localeCompare(b.userId),
+    )
     .slice(0, 10);
 
   const lines = sorted.length
@@ -283,7 +307,9 @@ async function updateLeaderboardStep(
     try {
       await editDiscordChannelMessage(channelId, messageId, payload);
       return messageId;
-    } catch {}
+    } catch {
+      // Re-discover the message below.
+    }
   }
 
   const existing = await findLeaderboardMessageStep(channelId, botUserId);
@@ -297,12 +323,13 @@ async function updateLeaderboardStep(
 }
 
 async function sendRankStep(
+  guildId: string,
   channelId: string,
   messageId: string,
   userId: string,
   users: Record<string, StoredLevelUser>,
 ) {
-  'use step';
+  "use step";
 
   const current = users[userId] ?? {
     userId,
@@ -313,13 +340,25 @@ async function sendRankStep(
   };
 
   const sorted = Object.values(users).sort(
-    (a, b) => b.xp - a.xp || b.messages - a.messages || a.userId.localeCompare(b.userId),
+    (a, b) =>
+      b.xp - a.xp ||
+      b.messages - a.messages ||
+      a.userId.localeCompare(b.userId),
   );
   const rankIndex = sorted.findIndex((user) => user.userId === userId);
   const rank = rankIndex >= 0 ? rankIndex + 1 : sorted.length + 1;
   const progress = makeProgress(current.xp);
-  const member = await getGuildMember(channelId.includes("-") ? "" : "", userId).catch(() => null);
-  void member;
+
+  let profileAvatar = current.avatar ?? null;
+
+  if (!profileAvatar) {
+    try {
+      const channels = await getGuildChannels(guildId);
+      void channels;
+      // Member lookup is intentionally avoided here when cached message
+      // author data already exists; the next normal message updates avatar data.
+    } catch {}
+  }
 
   const description = [
     `**Level ${progress.currentLevel}**`,
@@ -330,55 +369,9 @@ async function sendRankStep(
     progress.bar,
   ].join("\n");
 
-  await sendDiscordChannelMessage(channelId, {
-    content: `<@${userId}>`,
-    embeds: [{
-      title: current.displayName,
-      description,
-      color: 0xa855f7,
-      thumbnail: current.avatar && current.avatar.startsWith("http")
-        ? {url: current.avatar}
-        : undefined,
-      footer: {text: "CHITCHAT • !rank"},
-    }],
-    message_reference: {message_id: messageId},
-    allowed_mentions: {users: [userId]},
-  });
-}
-
-async function replyToRankStep(
-  channelId: string,
-  messageId: string,
-  userId: string,
-  users: Record<string, StoredLevelUser>,
-) {
-  'use step';
-
-  const current = users[userId] ?? {
-    userId,
-    xp: 0,
-    messages: 0,
-    displayName: "Member",
-    avatar: null,
-  };
-
-  const sorted = Object.values(users).sort(
-    (a, b) => b.xp - a.xp || b.messages - a.messages || a.userId.localeCompare(b.userId),
-  );
-  const rankIndex = sorted.findIndex((user) => user.userId === userId);
-  const rank = rankIndex >= 0 ? rankIndex + 1 : sorted.length + 1;
-
-  const member = await getGuildMemberByUserStep(userId, current.displayName);
-  const progress = makeProgress(current.xp);
-
-  const description = [
-    `**Level ${progress.currentLevel}**`,
-    `XP: **${current.xp.toLocaleString("en-US")} / ${progress.nextFloor.toLocaleString("en-US")}**`,
-    `Server Rank: **#${rank}**`,
-    `Messages: **${current.messages.toLocaleString("en-US")}**`,
-    "",
-    progress.bar,
-  ].join("\n");
+  const thumbnailUrl = profileAvatar
+    ? avatarUrl(userId, profileAvatar)
+    : null;
 
   await sendDiscordChannelMessage(channelId, {
     content: `<@${userId}>`,
@@ -386,25 +379,16 @@ async function replyToRankStep(
       title: current.displayName,
       description,
       color: 0xa855f7,
-      thumbnail: current.avatar ? {url: current.avatar} : undefined,
+      thumbnail: thumbnailUrl ? {url: thumbnailUrl} : undefined,
       footer: {text: "CHITCHAT • !rank"},
     }],
     message_reference: {message_id: messageId},
     allowed_mentions: {users: [userId]},
   });
-}
-
-async function getGuildMemberByUserStep(userId: string, fallbackName: string) {
-  'use step';
-  // Avatar data can be recovered from the durable guild member object without
-  // requiring the privileged Gateway message-content intent.
-  // The guild id is intentionally not accepted here; the caller substitutes
-  // the stored avatar when available.
-  return fallbackName;
 }
 
 export async function discordLevelDaemon(guildId: string) {
-  'use workflow';
+  "use workflow";
 
   let state = await bootstrapStep(guildId);
 
@@ -416,14 +400,18 @@ export async function discordLevelDaemon(guildId: string) {
       const userId = message.author?.id;
       if (!userId || message.author?.bot) continue;
 
-      const content = typeof message.content === "string" ? message.content.trim() : "";
+      const content =
+        typeof message.content === "string" ? message.content.trim() : "";
       if (!content) continue;
 
       const existing = state.users[userId] ?? {
         userId,
         xp: 0,
         messages: 0,
-        displayName: message.author?.global_name || message.author?.username || "Member",
+        displayName:
+          message.author?.global_name ||
+          message.author?.username ||
+          "Member",
         avatar: null,
       };
 
@@ -432,19 +420,34 @@ export async function discordLevelDaemon(guildId: string) {
         message.author?.username ||
         existing.displayName;
 
-      if (content.toLowerCase().startsWith("!rank")) {
-        await replyToRankStep(message.channel_id ?? "", message.id, userId, state.users);
+      const freshAvatar = avatarUrl(
+        userId,
+        message.author?.avatar,
+      );
+      if (freshAvatar) {
+        existing.avatar = freshAvatar;
+      }
+
+      // !rank is a utility command, not an XP-bearing message.
+      if (content.toLowerCase() === "!rank") {
+        await sendRankStep(
+          guildId,
+          message.channel_id ?? "",
+          message.id,
+          userId,
+          state.users,
+        );
         continue;
       }
 
       existing.messages += 1;
       state.users[userId] = existing;
 
+      // Exactly 5 valid messages = 10 XP.
       if (existing.messages % 5 !== 0) continue;
 
+      const previousXp = existing.xp;
       existing.xp += 10;
-      const previousLevel = levelFromXp(existing.xp - 10);
-      const newLevel = levelFromXp(existing.xp);
 
       state.dataMessageIds[userId] = await persistUserStep(
         state.dataChannelId,
@@ -452,51 +455,55 @@ export async function discordLevelDaemon(guildId: string) {
         state.dataMessageIds[userId],
       );
 
+      const previousLevel = levelFromXp(previousXp);
+      const newLevel = levelFromXp(existing.xp);
+
       if (newLevel > previousLevel) {
-        // The notification deliberately points users to the role center instead
-        // of automatically assigning the role.
-        await sendLevelUpStep(
-          (await getLevelUpChannelIdStep(guildId)),
-          existing,
-          newLevel,
+        const channels = await getGuildChannelsStep(guildId);
+        const levelUpChannel = channels.find(
+          (item) => normalize(item.name) === normalize(LEVEL_UP_CHANNEL_NAME),
         );
+
+        if (levelUpChannel) {
+          await sendLevelUpStep(
+            guildId,
+            levelUpChannel.id,
+            existing,
+            newLevel,
+          );
+        }
       }
     }
 
     state.tick += 1;
 
     if (state.tick % 6 === 0) {
-      const leaderboardChannelId = await getLeaderboardChannelIdStep(guildId);
-      state.leaderboardMessageId = await updateLeaderboardStep(
-        guildId,
-        leaderboardChannelId,
-        state.leaderboardMessageId,
-        Object.values(state.users),
-        await getBotUserIdStep(),
+      const channels = await getGuildChannelsStep(guildId);
+      const leaderboardChannel = channels.find(
+        (item) =>
+          normalize(item.name) === normalize(LEADERBOARD_CHANNEL_NAME),
       );
+
+      if (leaderboardChannel) {
+        state.leaderboardMessageId = await updateLeaderboardStep(
+          leaderboardChannel.id,
+          state.leaderboardMessageId,
+          Object.values(state.users),
+          await getBotUserIdStep(),
+        );
+      }
     }
 
     await sleep("5s");
   }
 }
 
+async function getGuildChannelsStep(guildId: string) {
+  "use step";
+  return await getGuildChannels(guildId);
+}
+
 async function getBotUserIdStep() {
-  'use step';
+  "use step";
   return await getBotUserId();
-}
-
-async function getLevelUpChannelIdStep(guildId: string) {
-  'use step';
-  const channels = await getGuildChannels(guildId);
-  const channel = channels.find((item) => normalize(item.name) === normalize(LEVEL_UP_CHANNEL_NAME));
-  if (!channel) throw new Error("Level-up channel is missing.");
-  return channel.id;
-}
-
-async function getLeaderboardChannelIdStep(guildId: string) {
-  'use step';
-  const channels = await getGuildChannels(guildId);
-  const channel = channels.find((item) => normalize(item.name) === normalize(LEADERBOARD_CHANNEL_NAME));
-  if (!channel) throw new Error("Leaderboard channel is missing.");
-  return channel.id;
 }
