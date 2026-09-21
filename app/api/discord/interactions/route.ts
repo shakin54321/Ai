@@ -288,8 +288,26 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  // /leaderboard is public.
+  // /leaderboard is owner-only.
   if (interaction.type === 2 && interaction.data?.name === "leaderboard") {
+    if (!isOwner(interaction)) {
+      return json({
+        type: 4,
+        data: {
+          embeds: [
+            embed(
+              "ACCESS RESTRICTED",
+              process.env.DISCORD_OWNER_ID
+                ? "The /leaderboard command is restricted to the bot owner."
+                : "Owner access is not configured yet. Set DISCORD_OWNER_ID in Vercel before using /leaderboard.",
+              {color: 0xef4444, footer: "Owner-only command"},
+            ),
+          ],
+          flags: 64,
+        },
+      });
+    }
+
     try {
       const stored = await readLevelStore(guildId);
       const sorted = [...stored.users.values()]

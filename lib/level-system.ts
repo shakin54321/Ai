@@ -350,6 +350,20 @@ export async function setupLevelSystem(guildId: string) {
   const dataChannel = await ensureLevelDataChannel(guildId, botUserId);
   const roles = await getGuildRoles(guildId);
 
+  // GIFs/embeds unlock at Level 20. Remove Embed Links from @everyone
+  // so only Level 20+ level roles retain that capability.
+  const everyoneRole = roles.find((role) => role.id === guildId);
+  if (everyoneRole && typeof everyoneRole.permissions === "string") {
+    const embedLinksPermission = 1n << 14n;
+    const currentPermissions = BigInt(everyoneRole.permissions);
+    const restrictedPermissions = currentPermissions & ~embedLinksPermission;
+    if (restrictedPermissions !== currentPermissions) {
+      await modifyRole(guildId, guildId, {
+        permissions: restrictedPermissions.toString(),
+      });
+    }
+  }
+
   // Level roles get baseline member access, then cumulative special unlocks:
   // 20 = GIF/embeds, 30 = reactions, 40 = media, 50 = video, etc.
   // No moderation, management, administrator, kick/ban, or message-management
