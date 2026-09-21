@@ -645,11 +645,10 @@ export async function POST(request: NextRequest) {
             {
               embeds: [embed(
                 "LEVEL ROLE CLAIMED",
-                `You claimed <@${targetRole.id}> for **Level ${currentLevel}**.`,
+                `You claimed <@&${targetRole.id}> for **Level ${currentLevel}**.`,
                 {color: targetRole.color ?? 0xa855f7, footer: "CHITCHAT • Level System"},
               )],
               allowed_mentions: {roles: []},
-              flags: 64,
             },
           );
         } catch (error) {
@@ -662,7 +661,6 @@ export async function POST(request: NextRequest) {
                 error instanceof Error ? error.message : "The level role could not be claimed.",
                 {color: 0xef4444, footer: "CHITCHAT • Level System"},
               )],
-              flags: 64,
             },
           ).catch(() => {});
         }
