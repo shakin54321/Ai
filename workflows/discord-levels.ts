@@ -10,7 +10,6 @@ import {
   readLevelStore,
   setupLevelSystem,
   xpForLevel,
-  levelRoleColor,
   type StoredLevelUser,
 } from "@/lib/level-system";
 import {
