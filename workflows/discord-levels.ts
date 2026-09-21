@@ -17,6 +17,7 @@ import {
   getBotUserId,
   getDiscordChannelMessages,
   getGuildChannels,
+  getGuildMember,
   getGuildRoles,
   sendDiscordChannelMessage,
 } from "@/lib/discord";
@@ -72,8 +73,18 @@ function isCountableChannel(channel: any) {
 
 function avatarUrl(userId: string, avatar?: string | null) {
   if (!avatar) return null;
+  if (/^https?:\\/\\//i.test(avatar)) return avatar;
   const extension = avatar.startsWith("a_") ? "gif" : "png";
   return `https://cdn.discordapp.com/avatars/${userId}/${avatar}.${extension}?size=256`;
+}
+
+function isRankCommandChannel(channel: any) {
+  const normalized = normalize(channel?.name);
+  return (
+    normalized === normalize(LEVEL_UP_CHANNEL_NAME) ||
+    normalized === normalize(LEADERBOARD_CHANNEL_NAME) ||
+    normalized === normalize(GET_ROLE_CHANNEL_NAME)
+  );
 }
 
 async function bootstrapStep(guildId: string): Promise<RuntimeState> {
@@ -93,7 +104,7 @@ async function bootstrapStep(guildId: string): Promise<RuntimeState> {
   const stored = await readLevelStore(guildId, dataChannel.id);
 
   const cursors: Record<string, string> = {};
-  for (const channel of channels.filter(isCountableChannel)) {
+  for (const channel of channels.filter((item) => isCountableChannel(item) || isRankCommandChannel(item))) {
     const messages = await getDiscordChannelMessages(channel.id, {limit: 1}) as DiscordMessage[];
     cursors[channel.id] = messages[0]?.id ?? "";
   }
@@ -127,7 +138,8 @@ async function fetchNewMessagesStep(
   const nextCursors = {...cursors};
   const newMessages: Array<DiscordMessage & {channelName?: string}> = [];
 
-  for (const channel of channels.filter(isCountableChannel)) {
+  for (const channel of channels.filter((item) => isCountableChannel(item) || isRankCommandChannel(item))) {
+    const rankOnlyChannel = isRankCommandChannel(channel);
     const previous = cursors[channel.id] || undefined;
     let cursor = previous;
     let fetched = 0;
@@ -141,7 +153,14 @@ async function fetchNewMessagesStep(
       if (!batch.length) break;
 
       for (const message of batch) {
-        newMessages.push({...message, channelName: channel.name});
+        const content = typeof message.content === "string" ? message.content.trim() : "";
+        if (rankOnlyChannel) {
+          if (content.toLowerCase() === "!rank") {
+            newMessages.push({...message, channelName: channel.name});
+          }
+        } else {
+          newMessages.push({...message, channelName: channel.name});
+        }
       }
 
       cursor = [...batch].sort((a, b) => {
@@ -354,13 +373,24 @@ async function sendRankStep(
 
   let profileAvatar = current.avatar ?? null;
 
-  if (!profileAvatar) {
-    try {
-      const channels = await getGuildChannels(guildId);
-      void channels;
-      // Member lookup is intentionally avoided here when cached message
-      // author data already exists; the next normal message updates avatar data.
-    } catch {}
+  try {
+    const member = await getGuildMember(guildId, userId) as any;
+    const memberAvatar =
+      member?.user?.avatar ??
+      member?.avatar ??
+      null;
+    const fetchedAvatar = avatarUrl(userId, memberAvatar);
+    if (fetchedAvatar) profileAvatar = fetchedAvatar;
+
+    if ((!current.displayName || current.displayName === "Member") &&
+        (member?.user?.global_name || member?.user?.username)) {
+      current.displayName =
+        member.user.global_name ||
+        member.user.username ||
+        current.displayName;
+    }
+  } catch {
+    // Cached level data is still enough to render the rank card.
   }
 
   const description = [
