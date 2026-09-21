@@ -318,6 +318,22 @@ export async function setupLevelSystem(guildId: string) {
   const dataChannel = await ensureLevelDataChannel(guildId, botUserId);
   const roles = await getGuildRoles(guildId);
 
+  // Level roles are ordinary member roles. They get only standard chat/community
+  // permissions; management/moderation permissions are intentionally excluded.
+  // Discord's @everyone/channel rules can still further restrict them.
+  const STANDARD_LEVEL_ROLE_PERMISSIONS =
+    (
+      (1n << 6n)  | // Add Reactions
+      (1n << 9n)  | // Stream
+      (1n << 10n) | // View Channel
+      (1n << 11n) | // Send Messages
+      (1n << 13n) | // Embed Links
+      (1n << 14n) | // Attach Files
+      (1n << 16n) | // Read Message History
+      (1n << 17n) | // Mention Everyone
+      (1n << 25n)    // Use Application Commands
+    ).toString();
+
   const levelRoles: Array<{level: number; id: string}> = [];
   for (let level = 1; level <= 100; level += 1) {
     const name = levelRoleName(level);
@@ -332,7 +348,7 @@ export async function setupLevelSystem(guildId: string) {
                 color: wantedColor,
                 hoist: false,
                 mentionable: false,
-                permissions: "0",
+                permissions: STANDARD_LEVEL_ROLE_PERMISSIONS,
               })
             : existing
         )
@@ -341,7 +357,7 @@ export async function setupLevelSystem(guildId: string) {
           color: wantedColor,
           hoist: false,
           mentionable: false,
-          permissions: "0",
+          permissions: STANDARD_LEVEL_ROLE_PERMISSIONS,
           reason: `CHITCHAT level role setup • Level ${level}`,
         });
 
