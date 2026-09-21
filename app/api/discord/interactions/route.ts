@@ -197,6 +197,97 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
+  // /rank is public and returns the caller's current level profile.
+  if (interaction.type === 2 && interaction.data?.name === "rank") {
+    const response = json({type: 5, data: {flags: 64}});
+
+    after(async () => {
+      try {
+        const userId = getInteractionUserId(interaction);
+        if (!userId) throw new Error("Your Discord account could not be identified.");
+
+        const stored = await readLevelStore(guildId);
+        const current = stored.users.get(userId) ?? {
+          userId,
+          xp: 0,
+          messages: 0,
+          displayName:
+            interaction.member?.user?.global_name ??
+            interaction.member?.user?.username ??
+            interaction.user?.global_name ??
+            interaction.user?.username ??
+            "Member",
+          avatar: null,
+        };
+
+        const sorted = [...stored.users.values()].sort(
+          (a, b) =>
+            b.xp - a.xp ||
+            b.messages - a.messages ||
+            a.userId.localeCompare(b.userId),
+        );
+        const rankIndex = sorted.findIndex((user) => user.userId === userId);
+        const rank = rankIndex >= 0 ? rankIndex + 1 : sorted.length + 1;
+
+        const level = levelFromXp(current.xp);
+        const currentFloor = level === 0 ? 0 : xpForLevel(level);
+        const nextFloor = level < 100 ? xpForLevel(level + 1) : xpForLevel(100);
+        const span = Math.max(1, nextFloor - currentFloor);
+        const ratio = level >= 100
+          ? 1
+          : Math.max(0, Math.min(1, (current.xp - currentFloor) / span));
+        const filled = level >= 100 ? 12 : Math.round(ratio * 12);
+        const bar = "█".repeat(filled) + "░".repeat(12 - filled);
+
+        let avatar = current.avatar ?? null;
+        try {
+          const member = await getGuildMember(guildId, userId) as any;
+          const memberAvatar = member?.user?.avatar ?? member?.avatar ?? null;
+          if (memberAvatar) {
+            const extension = memberAvatar.startsWith("a_") ? "gif" : "png";
+            avatar = `https://cdn.discordapp.com/avatars/${userId}/${memberAvatar}.${extension}?size=256`;
+          }
+        } catch {}
+
+        await editOriginalInteractionResponse(
+          applicationId,
+          interaction.token,
+          {
+            embeds: [{
+              title: current.displayName,
+              description: [
+                `**Level ${level}**`,
+                `XP: **${current.xp.toLocaleString("en-US")} / ${nextFloor.toLocaleString("en-US")}**`,
+                `Server Rank: **#${rank}**`,
+                `Messages: **${current.messages.toLocaleString("en-US")}**`,
+                "",
+                bar,
+              ].join("\n"),
+              color: 0xa855f7,
+              thumbnail: avatar ? {url: avatar} : undefined,
+              footer: {text: "CHITCHAT • /rank"},
+            }],
+            allowed_mentions: {users: []},
+          },
+        );
+      } catch (error) {
+        await editOriginalInteractionResponse(
+          applicationId,
+          interaction.token,
+          {
+            embeds: [embed(
+              "RANK UNAVAILABLE",
+              error instanceof Error ? error.message : "Your level profile is unavailable right now.",
+              {color: 0xef4444, footer: "CHITCHAT • Level System"},
+            )],
+          },
+        ).catch(() => {});
+      }
+    });
+
+    return response;
+  }
+
   // /leaderboard is public.
   if (interaction.type === 2 && interaction.data?.name === "leaderboard") {
     try {
