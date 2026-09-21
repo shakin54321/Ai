@@ -21,6 +21,7 @@ import {
   levelFromRoleName,
   levelFromXp,
   readLevelStore,
+  xpForLevel,
 } from "@/lib/level-system";
 
 export const runtime = "nodejs";
@@ -599,7 +600,7 @@ export async function POST(request: NextRequest) {
 
         if (currentLevel < targetLevel) {
           throw new Error(
-            `You need **${targetRole.name ? "" : ""}${targetLevel === 1 ? 100 : targetLevel}** level access first.`,
+            `You need **${xpForLevel(targetLevel).toLocaleString("en-US")} XP** to claim this role.`,
           );
         }
 
