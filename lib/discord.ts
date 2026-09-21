@@ -834,6 +834,12 @@ export async function registerVerifyCommand() {
       dm_permission: false,
     },
     {
+      name: "rank",
+      description: "View your CHITCHAT level profile.",
+      type: 1,
+      dm_permission: false,
+    },
+    {
       name: "mute",
       description: "Mute a server member for a selected time.",
       type: 1,
