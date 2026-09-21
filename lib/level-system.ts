@@ -51,6 +51,35 @@ export function levelFromXp(xp: number) {
   return level;
 }
 
+const BASE_LEVEL_ROLE_PERMISSIONS =
+  ((1n << 10n) | // View Channel
+   (1n << 11n) | // Send Messages
+   (1n << 16n)); // Read Message History
+
+const LEVEL_ROLE_PERMISSION_UNLOCKS = [
+  {level: 20, permission: 1n << 14n, label: "GIF / Embeds"},
+  {level: 30, permission: 1n << 6n, label: "Add Reactions"},
+  {level: 40, permission: 1n << 15n, label: "Media / Attach Files"},
+  {level: 50, permission: 1n << 9n, label: "Video / Stream"},
+  {level: 60, permission: 1n << 18n, label: "External Emojis"},
+  {level: 70, permission: 1n << 37n, label: "External Stickers"},
+  {level: 80, permission: 1n << 31n, label: "Application Commands"},
+  {level: 90, permission: 1n << 35n, label: "Create Public Threads"},
+  {level: 100, permission: 1n << 36n, label: "Create Private Threads"},
+] as const;
+
+export function levelRolePermissions(level: number) {
+  let permissions = BASE_LEVEL_ROLE_PERMISSIONS;
+  for (const unlock of LEVEL_ROLE_PERMISSION_UNLOCKS) {
+    if (level >= unlock.level) permissions |= unlock.permission;
+  }
+  return permissions.toString();
+}
+
+function levelRoleUnlockLabel(level: number) {
+  return LEVEL_ROLE_PERMISSION_UNLOCKS.find((unlock) => unlock.level === level)?.label ?? "";
+}
+
 function hslToRgb(h: number, s: number, l: number) {
   const hue = ((h % 360) + 360) % 360 / 360;
   const sat = Math.max(0, Math.min(1, s));
@@ -194,14 +223,17 @@ export function buildLevelRolePanel(page: number, roles: Array<{level: number; i
     "",
     "Earn XP by chatting in the server. Every **5 valid messages = 10 XP**.",
     "",
-    "Each level role uses the same CHITCHAT style with a unique color.",
-    "You can claim a role only after reaching its required XP.",
+    "Levels 01–19 have standard member access only.",
+    "Special unlocks begin at Level 20 and accumulate as you level up.",
+    "You can claim only your current unlocked level role.",
     "",
     `Showing Levels ${start + 1}–${Math.min(start + pageSize, roles.length)} • Page ${page + 1}/${pageCount}`,
     "",
-    ...visible.map((role) =>
-      `**Level ${String(role.level).padStart(2, "0")}** — ${xpForLevel(role.level).toLocaleString("en-US")} XP • <@&${role.id}>`,
-    ),
+    ...visible.map((role) => {
+      const unlock = levelRoleUnlockLabel(role.level);
+      const unlockText = unlock ? ` • **Unlock:** ${unlock}` : "";
+      return `**Level ${String(role.level).padStart(2, "0")}** — ${xpForLevel(role.level).toLocaleString("en-US")} XP • <@&${role.id}>${unlockText}`;
+    }),
   ].join("\n");
 
   return {
@@ -318,21 +350,12 @@ export async function setupLevelSystem(guildId: string) {
   const dataChannel = await ensureLevelDataChannel(guildId, botUserId);
   const roles = await getGuildRoles(guildId);
 
-  // Level roles are ordinary member roles. They get only standard chat/community
-  // permissions; management/moderation permissions are intentionally excluded.
+  // Level roles get baseline member access, then cumulative special unlocks:
+  // 20 = GIF/embeds, 30 = reactions, 40 = media, 50 = video, etc.
+  // No moderation, management, administrator, kick/ban, or message-management
+  // permissions are ever granted by the level system.
   // Discord's @everyone/channel rules can still further restrict them.
-  const STANDARD_LEVEL_ROLE_PERMISSIONS =
-    (
-      (1n << 6n)  | // Add Reactions
-      (1n << 9n)  | // Stream
-      (1n << 10n) | // View Channel
-      (1n << 11n) | // Send Messages
-      (1n << 14n) | // Embed Links
-      (1n << 15n) | // Attach Files
-      (1n << 16n) | // Read Message History
-      (1n << 18n) | // Use External Emojis
-      (1n << 31n)   // Use Application Commands
-    ).toString();
+  const desiredLevelRolePermissions = (level: number) => levelRolePermissions(level);
 
   const levelRoles: Array<{level: number; id: string}> = [];
   for (let level = 1; level <= 100; level += 1) {
@@ -343,13 +366,13 @@ export async function setupLevelSystem(guildId: string) {
     const role = existing
       ? (
           existing.color !== wantedColor ||
-          existing.permissions !== STANDARD_LEVEL_ROLE_PERMISSIONS
+          existing.permissions !== desiredLevelRolePermissions(level)
             ? await modifyRole(guildId, existing.id, {
                 name,
                 color: wantedColor,
                 hoist: false,
                 mentionable: false,
-                permissions: STANDARD_LEVEL_ROLE_PERMISSIONS,
+                permissions: desiredLevelRolePermissions(level),
               })
             : existing
         )
@@ -358,7 +381,7 @@ export async function setupLevelSystem(guildId: string) {
           color: wantedColor,
           hoist: false,
           mentionable: false,
-          permissions: STANDARD_LEVEL_ROLE_PERMISSIONS,
+          permissions: desiredLevelRolePermissions(level),
           reason: `CHITCHAT level role setup • Level ${level}`,
         });
 
