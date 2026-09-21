@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/discord/level-watchdog",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
