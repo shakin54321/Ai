@@ -668,6 +668,8 @@ export async function POST(request: NextRequest) {
 
       return response;
     }
+  }
+  
   // /verify
   if (
     interaction.type === 2 &&
