@@ -1,3 +1,14 @@
+const DISCORD_API = "https://discord.com/api/v10";
+const SEND_MESSAGES_PERMISSION = 1n << 11n;
+const VIEW_CHANNEL_PERMISSION = 1n << 10n;
+const READ_MESSAGE_HISTORY_PERMISSION = 1n << 16n;
+
+export function env(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
 async function discordFetch(path: string, init: RequestInit = {}) {
   const token = env("DISCORD_BOT_TOKEN");
   const headers = new Headers(init.headers);
