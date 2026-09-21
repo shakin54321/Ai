@@ -35,12 +35,26 @@ async function isAiLeaseCurrentStep(channelId: string, leaseToken: string) {
   return (channel.topic ?? "") === `${CHITCHAT_AI_LEASE_PREFIX}${leaseToken}`;
 }
 
-async function getRecentMessagesStep(channelId: string, after?: string | null) {
+async function pollAiMessagesStep(
+  channelId: string,
+  after: string | null,
+  leaseToken: string,
+) {
   'use step';
-  return await getDiscordChannelMessages(channelId, {
+
+  const channel = await getDiscordChannel(channelId);
+  const active = (channel?.topic ?? "") === \`${CHITCHAT_AI_LEASE_PREFIX}\${leaseToken}\`;
+
+  if (!active) {
+    return {active: false, messages: [] as DiscordMessage[]};
+  }
+
+  const messages = (await getDiscordChannelMessages(channelId, {
     limit: 50,
     after: after ?? undefined,
-  });
+  })) as DiscordMessage[];
+
+  return {active: true, messages};
 }
 
 async function getHistoryStep(channelId: string) {
@@ -53,13 +67,19 @@ async function generateReplyStep(messages: ChitchatAIMessage[]) {
   return await generateChitchatAI(messages);
 }
 
-async function sendReplyStep(
+async function sendReplyIfLeaseCurrentStep(
   channelId: string,
   messageId: string,
   userId: string,
   responseText: string,
+  leaseToken: string,
 ) {
   'use step';
+
+  const channel = await getDiscordChannel(channelId);
+  if ((channel?.topic ?? "") !== \`${CHITCHAT_AI_LEASE_PREFIX}\${leaseToken}\`) {
+    return false;
+  }
 
   const chunks: string[] = [];
   for (let index = 0; index < responseText.length; index += 1900) {
@@ -85,6 +105,8 @@ async function sendReplyStep(
             },
     });
   }
+
+  return true;
 }
 
 function sortOldestFirst(messages: DiscordMessage[]) {
@@ -164,15 +186,18 @@ export async function chitchatAiDaemon(
   let lastSeenMessageId = initialSorted.at(-1)?.id ?? null;
 
   while (true) {
-    if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
-      return;
-    }
-
     try {
-      const messages = (await getRecentMessagesStep(
+      const poll = await pollAiMessagesStep(
         channel.id,
         lastSeenMessageId,
-      )) as DiscordMessage[];
+        leaseToken,
+      );
+
+      if (!poll.active) {
+        return;
+      }
+
+      const messages = poll.messages;
 
       if (messages.length > 0) {
         console.log(
@@ -210,11 +235,12 @@ export async function chitchatAiDaemon(
           .trim();
 
         if (!prompt) {
-          await sendReplyStep(
+          await sendReplyIfLeaseCurrentStep(
             channel.id,
             message.id,
             message.author.id,
             'Hi! Send me your question or message here and I will help you.',
+            leaseToken,
           ).catch(() => {});
           continue;
         }
@@ -230,16 +256,17 @@ export async function chitchatAiDaemon(
         try {
           const answer = await generateReplyStep(aiMessages);
 
-          if (!(await isAiLeaseCurrentStep(channel.id, leaseToken))) {
-            return;
-          }
-
-          await sendReplyStep(
+          const sent = await sendReplyIfLeaseCurrentStep(
             channel.id,
             message.id,
             message.author.id,
             answer,
+            leaseToken,
           );
+
+          if (!sent) {
+            return;
+          }
         } catch (error) {
           let detail = 'Unknown AI error';
 
@@ -260,11 +287,12 @@ export async function chitchatAiDaemon(
           // Keep the public error message intentionally generic so secrets
           // or provider details never leak into the Discord channel.
           if (await isAiLeaseCurrentStep(channel.id, leaseToken)) {
-            await sendReplyStep(
+            await sendReplyIfLeaseCurrentStep(
               channel.id,
               message.id,
               message.author.id,
               'I could not generate a response right now. Please try again in a moment.',
+              leaseToken,
             ).catch(() => {});
           }
         }
@@ -273,6 +301,6 @@ export async function chitchatAiDaemon(
       console.error('[chitchat-ai] polling failed:', error);
     }
 
-    await sleep('5s');
+    await sleep('60s');
   }
 }
