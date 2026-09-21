@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/discord/ai-watchdog",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/discord/level-watchdog",
       "schedule": "0 * * * *"
     }

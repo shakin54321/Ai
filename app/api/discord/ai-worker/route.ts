@@ -1,4 +1,3 @@
-import { after } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   CHITCHAT_AI_LEASE_PREFIX,
@@ -10,7 +9,7 @@ import {
 import { generateChitchatAI, type ChitchatAIMessage } from '@/lib/ai';
 
 export const runtime = 'nodejs';
-export const maxDuration = 240;
+export const maxDuration = 60;
 
 type DiscordMessage = {
   id: string;
@@ -32,7 +31,7 @@ type WorkerState = {
 
 const POLL_MS = 2000;
 const LEASE_CHECK_MS = 8000;
-const HANDLER_MS = 100000;
+const HANDLER_MS = 50000;
 
 function sortOldestFirst(messages: DiscordMessage[]) {
   return [...messages].sort((a, b) => {
@@ -277,36 +276,6 @@ export async function POST(request: NextRequest) {
     }
 
     const cursor = await runWorker(state);
-
-    after(async () => {
-      try {
-        const response = await fetch(
-          state.baseUrl + '/api/discord/ai-worker',
-          {
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + workerSecret(),
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              ...state,
-              cursor,
-            }),
-            cache: 'no-store',
-          },
-        );
-
-        if (!response.ok) {
-          console.error(
-            '[chitchat-ai] worker handoff failed:',
-            response.status,
-            await response.text().catch(() => ''),
-          );
-        }
-      } catch (error) {
-        console.error('[chitchat-ai] worker handoff error:', error);
-      }
-    });
 
     return NextResponse.json({ok: true, cursor});
   } catch (error) {
