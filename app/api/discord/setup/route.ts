@@ -11,7 +11,6 @@ import {
 import { discordStatsDaemon } from "@/workflows/discord-stats";
 import { chitchatAiDaemon } from "@/workflows/discord-ai";
 import { discordLevelDaemon } from "@/workflows/discord-levels";
-import { setupLevelSystem } from "@/lib/level-system";
 
 export const runtime = "nodejs";
 
@@ -220,7 +219,6 @@ async function registerWithSecret(suppliedSecret: string | null) {
       throw new Error("The ╌✦🤖ai-chat channel could not be prepared.");
     }
 
-    const levelSetup = await setupLevelSystem(guildId);
     const statsRun = await start(discordStatsDaemon, [
       guildId,
       statsLeaseToken,
@@ -236,17 +234,19 @@ Application ID: ${env("DISCORD_CLIENT_ID")}
 Guild ID: ${guildId}
 AI Automation: ACTIVE
 AI Channel: ${aiChannel.name ?? "╌✦🤖ai-chat"}
-Level System: ACTIVE
-Level Roles Created/Verified: ${levelSetup.levelRoleCount}
-Level-Up Channel: ${levelSetup.levelUpChannelId}
-Leaderboard Channel: ${levelSetup.leaderboardChannelId}
-Role Center: ${levelSetup.getRoleChannelId}
-Level Data Channel: ${levelSetup.levelDataChannelId}
+Level System: STARTING
+Level Roles: 100 level roles are prepared by the durable level workflow.
+Level-Up Channel: ╌╌✦📈-level-up
+Leaderboard Channel: ╌╌✦🏆-leaderboard
+Role Center: ╌╌✦🎭get-role
 Level Workflow Run: ${levelRun.runId}
 Stale CHITCHAT Workflows Cancelled: ${cancelledRuns}
 Stats Workflow Run: ${statsRun.runId}
 AI Workflow Run: ${aiRun.runId}
 
+Existing verification, member count, online status, welcome, and announcement automation remains active and was not changed.`,
+      false,
+    );
 Existing verification, member count, online status, welcome, and announcement automation remains active and was not changed.`,
       false,
     );
