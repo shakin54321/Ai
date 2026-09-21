@@ -8,7 +8,9 @@ import {
   levelFromXp,
   levelRoleName,
   readLevelStore,
+  setupLevelSystem,
   xpForLevel,
+  levelRoleColor,
   type StoredLevelUser,
 } from "@/lib/level-system";
 import {
@@ -77,6 +79,8 @@ function avatarUrl(userId: string, avatar?: string | null) {
 
 async function bootstrapStep(guildId: string) {
   "use step";
+
+  await setupLevelSystem(guildId);
 
   const channels = await getGuildChannels(guildId);
   const dataChannel = channels.find(
