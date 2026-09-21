@@ -855,6 +855,12 @@ export async function registerVerifyCommand() {
       ],
     },
     {
+      name: "leaderboard",
+      description: "View the CHITCHAT XP leaderboard.",
+      type: 1,
+      dm_permission: false,
+    },
+    {
       name: "mute",
       description: "Mute a server member for a selected time.",
       type: 1,
