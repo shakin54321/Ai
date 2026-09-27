@@ -64,10 +64,19 @@ Keep message under 120 characters.
 
             if (content.isBlank()) return fallback(command)
             parse(JSONObject(content))
-        } catch (_: Exception) {
-            fallback(command)
+        } catch (e: Exception) {
+            val message = e.message?.trim().orEmpty()
+            return Plan(
+                message = if (message.isBlank()) {
+                    "Groq request failed. Check your API key and internet connection."
+                } else {
+                    "Groq error: " + message.take(160)
+                },
+                actions = emptyList(),
+                done = true
+            )
         }
-    }
+    
 
     private fun post(body: JSONObject, apiKey: String): JSONObject {
         val connection = (URL("https://api.groq.com/openai/v1/chat/completions")
