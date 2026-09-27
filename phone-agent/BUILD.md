@@ -1,0 +1,1 @@
+Android APK build is configured in .github/workflows/shakin-agent-apk.yml. The workflow builds phone-agent/android-agent and publishes phone-agent/releases/shakin-agent-debug.apk on success.
