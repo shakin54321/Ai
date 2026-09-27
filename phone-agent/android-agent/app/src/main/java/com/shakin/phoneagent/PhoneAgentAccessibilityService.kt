@@ -89,9 +89,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         executor.execute {
             working = true
             try {
-                callbackOnMain(callback, execute(plan) { action ->
-                    "Confirmed: " + actionProgress(action)
-                })
+                callbackOnMain(callback, execute(plan))
             } catch (e: Exception) {
                 callbackOnMain(callback, error(e.message ?: "Action failed."))
             } finally {
