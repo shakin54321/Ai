@@ -193,7 +193,12 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     private fun tapDescription(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val node = find(root, target.lowercase(), true) ?: return false
-        return clickNode(node)
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (rect.isEmpty) return false
+        tapCoordinates(rect.centerX(), rect.centerY())
+        return true
     }
 
     private fun tapCoordinates(x: Int, y: Int) {
