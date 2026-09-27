@@ -181,14 +181,27 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
     private fun launchByLabel(label: String) {
         val target = label.trim().lowercase()
+        require(target.isNotBlank()) { "App name is empty." }
+
         val pm = packageManager
-        val app = pm.getInstalledApplications(0).firstOrNull {
-            pm.getApplicationLabel(it).toString().lowercase().contains(target)
+        val launcherQuery = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+
+        val candidates = pm.queryIntentActivities(launcherQuery, 0)
+        val match = candidates.firstOrNull {
+            it.loadLabel(pm).toString().trim().lowercase() == target
+        } ?: candidates.firstOrNull {
+            it.loadLabel(pm).toString().trim().lowercase().contains(target)
         } ?: throw IllegalArgumentException("App not found: $label")
 
-        val launchIntent = pm.getLaunchIntentForPackage(app.packageName)
-            ?: throw IllegalArgumentException("App cannot be opened: $label")
-        startActivity(launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            setPackage(match.activityInfo.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        startActivity(launchIntent)
     }
 
     private fun tapDescription(target: String): Boolean {
