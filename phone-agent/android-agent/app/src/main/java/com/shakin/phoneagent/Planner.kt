@@ -7,8 +7,10 @@ import java.net.URL
 
 object Planner {
     const val MODEL = "openai/gpt-oss-120b"
+    private const val BASE_URL = "https://api.groq.com/openai/v1"
 
-    data class Action(val type: String, val arg: String = "", val ms: Long = 0)
+    data class Action(val type: String, val arg: String = "", val ms: Long = 0L)
+
     data class Plan(
         val message: String,
         val actions: List<Action>,
@@ -16,31 +18,66 @@ object Planner {
         val done: Boolean = false
     )
 
+    fun testApiKey(apiKey: String): String {
+        val key = apiKey.trim()
+        if (key.isBlank()) return "API key is empty."
+
+        val connection = (URL(BASE_URL + "/models").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10_000
+            readTimeout = 15_000
+            useCaches = false
+            setRequestProperty("Authorization", "Bearer " + key)
+            setRequestProperty("Accept", "application/json")
+        }
+
+        return try {
+            val code = connection.responseCode
+            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+
+            if (code in 200..299) "Connected to Groq."
+            else extractGroqError(text, code)
+        } catch (e: Exception) {
+            "Connection failed: " + (e.message ?: "network error")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     fun next(command: String, ui: String, apps: String, apiKey: String): Plan {
         if (apiKey.isBlank()) return fallback(command)
 
         return try {
             val system = """
 You are Shakin Agent, an Android phone-control planner.
-Return only valid JSON.
-Use the current visible UI text and installed app labels.
-For multi-step work, return the smallest batch that should work now. The host app will execute it, refresh the UI, and ask again.
-Allowed actions: open_app, tap_text, tap_description, tap_coordinates, type_text,
-back, home, recents, swipe, open_url, wait, scroll.
-Set done=true when the task is already complete.
-Set risky=true for sending/posting/calling/deleting/purchasing or account/security changes.
-Never invent app labels or UI text.
-Keep message under 120 characters.
+Return ONLY valid JSON.
+The host app can execute these actions:
+open_app, tap_text, tap_description, tap_coordinates, type_text,
+back, home, recents, swipe, scroll, open_url, wait.
+
+Rules:
+1. Use the current UI text and installed launcher-app labels as the source of truth.
+2. For multi-step tasks return a SMALL batch that can work on the current screen.
+3. After a screen change the host refreshes the UI and asks again.
+4. Never invent visible text, app labels, coordinates, package names, or actions.
+5. Set done=true only when the user's requested task is actually complete or no action is needed.
+6. Set risky=true for sending/posting/calling/deleting/purchasing/payment/account or security changes.
+7. Keep message under 120 characters.
 """.trimIndent()
 
-            val user = buildString {
-                append("User command:\n")
-                append(command)
-                append("\n\nCurrent visible UI:\n")
-                append(ui.ifBlank { "(none visible)" })
-                append("\n\nInstalled app labels:\n")
-                append(apps.ifBlank { "(unknown)" })
-            }
+            val user = """
+User command:
+$command
+
+Current visible UI:
+${ui.ifBlank { "(none visible)" }}
+
+Installed launcher apps:
+${apps.ifBlank { "(unknown)" }}
+""".trimIndent()
 
             val body = JSONObject()
                 .put("model", MODEL)
@@ -54,7 +91,7 @@ Keep message under 120 characters.
                         .put(JSONObject().put("role", "user").put("content", user))
                 )
 
-            val response = post(body, apiKey)
+            val response = postChat(body, apiKey)
             val content = response
                 .getJSONArray("choices")
                 .getJSONObject(0)
@@ -62,30 +99,28 @@ Keep message under 120 characters.
                 .optString("content")
                 .trim()
 
-            if (content.isBlank()) return fallback(command)
+            if (content.isBlank()) {
+                return Plan("Groq returned an empty response.", emptyList(), done = true)
+            }
+
             parse(JSONObject(content))
         } catch (e: Exception) {
-            val message = e.message?.trim().orEmpty()
-            return Plan(
-                message = if (message.isBlank()) {
-                    "Groq request failed. Check your API key and internet connection."
-                } else {
-                    "Groq error: " + message.take(160)
-                },
+            Plan(
+                message = "Groq error: " + (e.message ?: "request failed").take(160),
                 actions = emptyList(),
                 done = true
             )
         }
     }
 
-    private fun post(body: JSONObject, apiKey: String): JSONObject {
-        val connection = (URL("https://api.groq.com/openai/v1/chat/completions")
-            .openConnection() as HttpURLConnection).apply {
+    private fun postChat(body: JSONObject, apiKey: String): JSONObject {
+        val connection = (URL(BASE_URL + "/chat/completions").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
             connectTimeout = 15_000
             readTimeout = 45_000
-            setRequestProperty("Authorization", "Bearer " + apiKey)
+            useCaches = false
+            setRequestProperty("Authorization", "Bearer " + apiKey.trim())
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/json")
         }
@@ -94,15 +129,36 @@ Keep message under 120 characters.
             connection.outputStream.use {
                 it.write(body.toString().toByteArray(Charsets.UTF_8))
             }
+
             val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299 || text.isBlank()) {
-                throw IllegalStateException("Groq request failed.")
+            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+
+            if (code !in 200..299) {
+                throw IllegalStateException(extractGroqError(text, code))
             }
+            if (text.isBlank()) {
+                throw IllegalStateException("Empty response from Groq.")
+            }
+
             JSONObject(text)
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun extractGroqError(text: String, code: Int): String {
+        return try {
+            JSONObject(text)
+                .optJSONObject("error")
+                ?.optString("message")
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: "Groq request failed (HTTP " + code + ")."
+        } catch (_: Exception) {
+            "Groq request failed (HTTP " + code + ")."
         }
     }
 
@@ -114,9 +170,19 @@ Keep message under 120 characters.
             val item = actionsJson.optJSONObject(i) ?: continue
             val type = item.optString("type").trim()
             if (type !in allowedTypes) continue
+
+            val arg = when (type) {
+                "tap_coordinates" -> {
+                    val x = item.optInt("x", -1)
+                    val y = item.optInt("y", -1)
+                    if (x < 0 || y < 0) "" else x.toString() + "," + y.toString()
+                }
+                else -> item.optString("arg").trim()
+            }
+
             actions += Action(
                 type = type,
-                arg = item.optString("arg"),
+                arg = arg,
                 ms = item.optLong("ms", 0L)
             )
         }
@@ -149,32 +215,16 @@ Keep message under 120 characters.
             lower.startsWith("type ") || lower.startsWith("write ") ->
                 Plan("Typing the text.", listOf(Action("type_text", raw.substringAfter(' '))))
             lower.contains("scroll up") || lower.contains("swipe up") ->
-                Plan("Scrolling up.", listOf(Action("swipe_up")))
+                Plan("Scrolling up.", listOf(Action("swipe", "up")))
             lower.contains("scroll down") || lower.contains("swipe down") ->
-                Plan("Scrolling down.", listOf(Action("swipe_down")))
+                Plan("Scrolling down.", listOf(Action("swipe", "down")))
             else ->
-                Plan(
-                    "Add your Groq API key in Settings for natural-language phone control.",
-                    emptyList(),
-                    done = true
-                )
+                Plan("Add a Groq API key for natural-language control.", emptyList(), done = true)
         }
     }
 
     private val allowedTypes = setOf(
-        "open_app",
-        "tap_text",
-        "tap_description",
-        "tap_coordinates",
-        "type_text",
-        "back",
-        "home",
-        "recents",
-        "swipe_up",
-        "swipe_down",
-        "swipe",
-        "open_url",
-        "wait",
-        "scroll"
+        "open_app", "tap_text", "tap_description", "tap_coordinates", "type_text",
+        "back", "home", "recents", "swipe", "scroll", "open_url", "wait"
     )
 }
