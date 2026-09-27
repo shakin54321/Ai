@@ -244,6 +244,15 @@ class MainActivity : Activity() {
 
         box.addView(title)
 
+        statusDetail = TextView(this).apply {
+            text = "Save a Groq key and enable Accessibility to get started."
+            textSize = 10.5f
+            setTextColor(muted)
+            maxLines = 2
+            setPadding(dp(15), dp(7), dp(4), 0)
+        }
+        box.addView(statusDetail)
+
         val actionRow = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
         }
@@ -638,8 +647,6 @@ class MainActivity : Activity() {
             }
         }
     }
-
-    private lateinit var statusDetailDummy: TextView
 
     private fun addUser(message: String) = addBubble(message, true)
     private fun addAgent(message: String) = addBubble(message, false)
