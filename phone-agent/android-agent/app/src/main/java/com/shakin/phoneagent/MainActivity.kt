@@ -59,3 +59,5 @@ class MainActivity : Activity() {
         groqView.setText(prefs.getString("groq",""))
     }
 }
+
+// CI-ready Android agent build.
