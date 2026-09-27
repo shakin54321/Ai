@@ -165,7 +165,6 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                         Intent(Intent.ACTION_VIEW, Uri.parse(action.arg))
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
-                    "wait" -> Thread.sleep(action.ms.coerceIn(50, 3000))
                 }
                 Thread.sleep(220)
             }
