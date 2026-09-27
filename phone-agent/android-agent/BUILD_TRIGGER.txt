@@ -1,1 +1,1 @@
-Trigger APK workflow after root workflow installation.
+Trigger Android APK build after SDK setup fix #2
