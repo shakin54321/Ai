@@ -190,7 +190,7 @@ class MainActivity : Activity() {
         })
         keyInput = EditText(this).apply {
             hint = "Groq API key"
-            hintTextColor = muted
+            setHintTextColor(muted)
             setTextColor(textColor)
             inputType = 0x00000081
             setText(SecureStore(this@MainActivity).get())
