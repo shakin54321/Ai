@@ -96,9 +96,15 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     private fun process(command: String): String {
         val plan = Planner.plan(command, snapshot(), apps(), groqKey())
         if (plan.actions.isEmpty()) return JSONObject().put("ok", true).put("message", plan.message).toString()
-        if (plan.risky) {
+        val sensitive = Regex(
+            "(?i)\\b(send|message|call|delete|remove|buy|purchase|pay|transfer|password|security|logout|uninstall|reset|shutdown)\\b"
+        ).containsMatchIn(command)
+        if (plan.risky || sensitive) {
             pending = plan
-            return JSONObject().put("ok", true).put("requiresConfirmation", true).put("message", plan.message).toString()
+            return JSONObject().put("ok", true)
+                .put("requiresConfirmation", true)
+                .put("message", if (plan.message.isBlank()) "Please confirm this sensitive action." else plan.message)
+                .toString()
         }
         return execute(plan)
     }
