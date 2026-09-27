@@ -129,7 +129,7 @@ class MainActivity : Activity() {
 
         input = EditText(this).apply {
             hint = "Tell your phone…"
-            hintTextColor = muted
+            setHintTextColor(muted)
             setTextColor(textColor)
             textSize = 14f
             minHeight = dp(54)
