@@ -11,10 +11,13 @@ import android.speech.RecognizerIntent
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.ViewTreeObserver
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
@@ -22,18 +25,18 @@ import android.widget.TextView
 import android.graphics.drawable.GradientDrawable
 import android.animation.ObjectAnimator
 import android.view.animation.DecelerateInterpolator
-import android.view.MotionEvent
 import org.json.JSONObject
 import java.util.Locale
 
 class MainActivity : Activity() {
 
-    private lateinit var root: LinearLayout
+    private lateinit var root: FrameLayout
+    private lateinit var contentScroll: ScrollView
+    private lateinit var content: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var statusDetail: TextView
     private lateinit var statusDot: View
     private lateinit var chat: LinearLayout
-    private lateinit var chatScroll: ScrollView
     private lateinit var input: EditText
     private lateinit var keyInput: EditText
     private lateinit var keyButton: Button
@@ -44,11 +47,12 @@ class MainActivity : Activity() {
 
     private var progressBubble: TextView? = null
     private var pulseAnimator: ObjectAnimator? = null
+    private var keyboardWatcher: ViewTreeObserver.OnGlobalLayoutListener? = null
+
     private val bg = Color.rgb(255, 247, 251)
     private val card = Color.WHITE
     private val pink = Color.rgb(255, 91, 145)
     private val pinkDark = Color.rgb(224, 54, 111)
-    private val pinkSoft = Color.rgb(255, 229, 239)
     private val pinkSofter = Color.rgb(255, 241, 246)
     private val textColor = Color.rgb(52, 35, 43)
     private val muted = Color.rgb(128, 102, 112)
@@ -56,6 +60,7 @@ class MainActivity : Activity() {
     private val green = Color.rgb(83, 189, 125)
     private val orange = Color.rgb(255, 173, 94)
     private val voiceRequestCode = 991
+    private val composerBottomMargin = 12
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,17 +76,15 @@ class MainActivity : Activity() {
 
             if (Build.VERSION.SDK_INT >= 23) {
                 @Suppress("DEPRECATION")
-                window.decorView.systemUiVisibility =
-                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
-                        if (Build.VERSION.SDK_INT >= 26) {
-                            View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-                        } else {
-                            0
-                        }
+                var flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                if (Build.VERSION.SDK_INT >= 26) {
+                    flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                }
+                window.decorView.systemUiVisibility = flags
             }
 
             buildUi()
-            installKeyboardAnimation()
+            installKeyboardWatcher()
             refreshUiState()
         } catch (e: Throwable) {
             buildCrashSafeUi(e)
@@ -90,34 +93,92 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        refreshUiState()
+        if (::root.isInitialized) refreshUiState()
+    }
+
+    override fun onDestroy() {
+        keyboardWatcher?.let { root.viewTreeObserver.removeOnGlobalLayoutListener(it) }
+        stopPulse()
+        super.onDestroy()
     }
 
     private fun buildUi() {
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(12))
+        root = FrameLayout(this).apply {
+            setBackgroundColor(bg)
+            clipToPadding = false
+        }
+
+        contentScroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            clipToPadding = false
+            setPadding(dp(14), dp(10), dp(14), dp(110))
             background = pageBackground()
         }
 
+        content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        contentScroll.addView(content)
+        root.addView(
+            contentScroll,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        buildHeader()
+        content.addView(space(10))
+        content.addView(buildStatusCard())
+        content.addView(space(10))
+        content.addView(buildChatCard())
+        content.addView(space(8))
+
+        settingsPanel = buildSettingsPanel().apply { visibility = View.GONE }
+        content.addView(settingsPanel)
+        content.addView(space(7))
+
+        confirmPanel = buildConfirmPanel().apply { visibility = View.GONE }
+        content.addView(confirmPanel)
+        content.addView(space(8))
+
+        composer = buildComposer()
+        val composerParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM
+        ).apply {
+            leftMargin = dp(12)
+            rightMargin = dp(12)
+            bottomMargin = dp(composerBottomMargin)
+        }
+        root.addView(composer, composerParams)
+
+        setContentView(root)
+    }
+
+    private fun buildHeader() {
         val header = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), dp(3), dp(2), 0)
         }
 
         val logo = TextView(this).apply {
             text = "S"
-            textSize = 21f
+            textSize = 20f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
-            background = rounded(pink, 20)
+            background = rounded(pink, 19)
             elevation = dp(5).toFloat()
         }
-        header.addView(logo, LinearLayout.LayoutParams(dp(50), dp(50)))
+        header.addView(logo, LinearLayout.LayoutParams(dp(48), dp(48)))
 
         val titles = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(8), 0)
+            setPadding(dp(11), 0, dp(7), 0)
         }
 
         titles.addView(TextView(this).apply {
@@ -126,17 +187,19 @@ class MainActivity : Activity() {
             setTextColor(textColor)
             typeface = Typeface.DEFAULT_BOLD
         })
+
         titles.addView(TextView(this).apply {
             text = "Your phone, controlled by your words"
-            textSize = 11f
+            textSize = 10.5f
             setTextColor(muted)
             setPadding(0, dp(2), 0, 0)
         })
+
         header.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
 
         val statusPill = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(7), dp(10), dp(7))
+            setPadding(dp(9), dp(7), dp(9), dp(7))
             background = strokeRounded(Color.WHITE, border, 999)
             elevation = dp(2).toFloat()
         }
@@ -153,74 +216,28 @@ class MainActivity : Activity() {
         statusPill.addView(statusText)
         header.addView(statusPill)
 
-        root.addView(header)
-        root.addView(space(10))
-
-        root.addView(buildStatusCard())
-        root.addView(space(10))
-
-        chatScroll = ScrollView(this).apply {
-            isFillViewport = true
-            clipToPadding = false
-            setPadding(0, 0, 0, dp(2))
-            background = strokeRounded(card, border, 26)
-            elevation = dp(3).toFloat()
-        }
-
-        chat = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(13), dp(15), dp(13), dp(16))
-        }
-
-        val welcome = TextView(this).apply {
-            text = "Try “Open YouTube”, “Open WhatsApp”, “Go home”, or describe a multi-step task."
-            textSize = 12f
-            setTextColor(muted)
-            setPadding(dp(5), dp(3), dp(5), dp(10))
-            alpha = 0.9f
-        }
-        chat.addView(welcome)
-        chatScroll.addView(chat)
-        root.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
-
-        root.addView(space(9))
-
-        settingsPanel = buildSettingsPanel()
-        settingsPanel.visibility = View.GONE
-        root.addView(settingsPanel)
-        root.addView(space(7))
-
-        confirmPanel = buildConfirmPanel()
-        confirmPanel.visibility = View.GONE
-        root.addView(confirmPanel)
-        root.addView(space(7))
-
-        composer = buildComposer()
-        root.addView(composer)
-
-        setContentView(root)
+        content.addView(header)
     }
 
     private fun buildStatusCard(): LinearLayout {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(15), dp(13), dp(15), dp(13))
+            setPadding(dp(14), dp(13), dp(14), dp(13))
             background = strokeRounded(Color.WHITE, border, 23)
             elevation = dp(2).toFloat()
         }
 
-        val title = LinearLayout(this).apply {
+        val titleRow = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val spark = TextView(this).apply {
+        titleRow.addView(TextView(this).apply {
             text = "●"
             textSize = 9f
             setTextColor(pink)
-        }
-        title.addView(spark)
+        })
 
-        title.addView(TextView(this).apply {
+        titleRow.addView(TextView(this).apply {
             text = "Agent activity"
             textSize = 13f
             setTextColor(textColor)
@@ -230,44 +247,92 @@ class MainActivity : Activity() {
 
         liveStatus = TextView(this).apply {
             text = "Ready when you are."
-            textSize = 11f
+            textSize = 10.5f
             setTextColor(muted)
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        title.addView(liveStatus, LinearLayout.LayoutParams(0, -2, 1f).also {
+        titleRow.addView(liveStatus, LinearLayout.LayoutParams(0, -2, 1f).also {
             it.setMargins(dp(9), 0, 0, 0)
         })
 
-        box.addView(title)
+        box.addView(titleRow)
 
         statusDetail = TextView(this).apply {
             text = "Save a Groq key and enable Accessibility to get started."
             textSize = 10.5f
             setTextColor(muted)
             maxLines = 2
-            setPadding(dp(15), dp(7), dp(4), 0)
+            setPadding(dp(15), dp(6), dp(4), 0)
         }
         box.addView(statusDetail)
 
-        val actionRow = LinearLayout(this).apply {
+        val row = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val access = pillButton("Accessibility") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        actionRow.addView(access, LinearLayout.LayoutParams(0, dp(40), 1f))
+        row.addView(
+            pillButton("Accessibility") {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            },
+            LinearLayout.LayoutParams(0, dp(39), 1f)
+        )
 
-        actionRow.addView(spaceH(7))
+        row.addView(spaceH(7))
 
-        val settings = pillButton("Settings") {
-            togglePanel(settingsPanel)
-        }
-        actionRow.addView(settings, LinearLayout.LayoutParams(0, dp(40), 1f))
+        row.addView(
+            pillButton("Settings") {
+                togglePanel(settingsPanel)
+            },
+            LinearLayout.LayoutParams(0, dp(39), 1f)
+        )
 
         box.addView(space(8))
-        box.addView(actionRow)
+        box.addView(row)
+        return box
+    }
+
+    private fun buildChatCard(): LinearLayout {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = strokeRounded(card, border, 25)
+            setPadding(dp(11), dp(12), dp(11), dp(10))
+            elevation = dp(2).toFloat()
+            minimumHeight = dp(300)
+        }
+
+        val heading = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        heading.addView(TextView(this).apply {
+            text = "Conversation"
+            textSize = 13f
+            setTextColor(textColor)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+
+        heading.addView(TextView(this).apply {
+            text = "  Live"
+            textSize = 10f
+            setTextColor(pinkDark)
+        })
+
+        box.addView(heading)
+        box.addView(space(5))
+
+        chat = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        chat.addView(TextView(this).apply {
+            text = "Try “Open YouTube”, “Open WhatsApp”, “Go home”, or describe a task."
+            textSize = 11.5f
+            setTextColor(muted)
+            setPadding(dp(4), dp(4), dp(4), dp(8))
+        })
+
+        box.addView(chat)
         return box
     }
 
@@ -317,24 +382,31 @@ class MainActivity : Activity() {
         keyRow.addView(keyButton, LinearLayout.LayoutParams(dp(64), dp(48)).also {
             it.setMargins(dp(8), 0, 0, 0)
         })
+
         box.addView(keyRow)
 
         val buttons = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        buttons.addView(primaryButton("Save & Test") {
-            saveAndTestKey()
-        }, LinearLayout.LayoutParams(0, dp(43), 1f))
+        buttons.addView(
+            primaryButton("Save & Test") {
+                saveAndTestKey()
+            },
+            LinearLayout.LayoutParams(0, dp(43), 1f)
+        )
 
         buttons.addView(spaceH(8))
 
-        buttons.addView(pillButton("Clear") {
-            SecureStore(this@MainActivity).put("")
-            keyInput.setText("")
-            liveStatus.text = "Groq key cleared."
-            refreshUiState()
-        }, LinearLayout.LayoutParams(0, dp(43), 1f))
+        buttons.addView(
+            pillButton("Clear") {
+                SecureStore(this@MainActivity).put("")
+                keyInput.setText("")
+                liveStatus.text = "Groq key cleared."
+                refreshUiState()
+            },
+            LinearLayout.LayoutParams(0, dp(43), 1f)
+        )
 
         box.addView(space(8))
         box.addView(buttons)
@@ -367,24 +439,30 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        row.addView(primaryButton("Confirm") {
-            confirmPanel.visibility = View.GONE
-            animateOut(confirmPanel)
-            showProgress("Completing the confirmed action…")
-            PhoneAgentAccessibilityService.instance?.confirmPending { response ->
-                runOnUiThread { handleAgentResponse(response) }
-            }
-        }, LinearLayout.LayoutParams(0, dp(42), 1f))
+        row.addView(
+            primaryButton("Confirm") {
+                confirmPanel.visibility = View.GONE
+                animateOut(confirmPanel)
+                showProgress("Completing the confirmed action…")
+                PhoneAgentAccessibilityService.instance?.confirmPending { response ->
+                    runOnUiThread { handleAgentResponse(response) }
+                }
+            },
+            LinearLayout.LayoutParams(0, dp(42), 1f)
+        )
 
         row.addView(spaceH(8))
 
-        row.addView(pillButton("Cancel") {
-            PhoneAgentAccessibilityService.instance?.cancelPending()
-            confirmPanel.visibility = View.GONE
-            addAgent("Cancelled.")
-            liveStatus.text = "Ready when you are."
-            refreshUiState()
-        }, LinearLayout.LayoutParams(0, dp(42), 1f))
+        row.addView(
+            pillButton("Cancel") {
+                PhoneAgentAccessibilityService.instance?.cancelPending()
+                confirmPanel.visibility = View.GONE
+                addAgent("Cancelled.")
+                liveStatus.text = "Ready when you are."
+                refreshUiState()
+            },
+            LinearLayout.LayoutParams(0, dp(42), 1f)
+        )
 
         box.addView(row)
         return box
@@ -393,9 +471,9 @@ class MainActivity : Activity() {
     private fun buildComposer(): LinearLayout {
         val wrap = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            background = strokeRounded(Color.WHITE, border, 23)
+            background = strokeRounded(Color.WHITE, border, 24)
             setPadding(dp(7), dp(7), dp(7), dp(7))
-            elevation = dp(6).toFloat()
+            elevation = dp(7).toFloat()
         }
 
         input = EditText(this).apply {
@@ -403,33 +481,38 @@ class MainActivity : Activity() {
             setHintTextColor(muted)
             setTextColor(textColor)
             textSize = 14f
-            minHeight = dp(50)
+            minHeight = dp(49)
             maxLines = 4
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(13), dp(10), dp(11), dp(10))
             background = rounded(pinkSofter, 18)
+            isSingleLine = false
             setOnFocusChangeListener { _, focused ->
                 if (focused) {
-                    animateComposer(true)
+                    composer.animate()
+                        .translationY(-dp(4).toFloat())
+                        .setDuration(170)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
                 }
             }
         }
 
         wrap.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
 
-        val mic = pillButton("Mic") {
-            startVoiceInput()
-        }
-        wrap.addView(mic, LinearLayout.LayoutParams(dp(53), dp(50)).also {
-            it.setMargins(dp(7), 0, 0, 0)
-        })
+        wrap.addView(
+            pillButton("Mic") { startVoiceInput() },
+            LinearLayout.LayoutParams(dp(52), dp(49)).also {
+                it.setMargins(dp(7), 0, 0, 0)
+            }
+        )
 
-        val send = primaryButton("Send") {
-            submitCurrent()
-        }
-        wrap.addView(send, LinearLayout.LayoutParams(dp(67), dp(50)).also {
-            it.setMargins(dp(7), 0, 0, 0)
-        })
+        wrap.addView(
+            primaryButton("Send") { submitCurrent() },
+            LinearLayout.LayoutParams(dp(66), dp(49)).also {
+                it.setMargins(dp(7), 0, 0, 0)
+            }
+        )
 
         return wrap
     }
@@ -442,14 +525,13 @@ class MainActivity : Activity() {
         }
 
         if (!SecureStore(this).put(key)) {
-            liveStatus.text = "Could not save the key securely. Please paste it again."
+            liveStatus.text = "Could not save the key securely."
             return
         }
 
         statusText.text = "Testing"
         statusDot.background = rounded(pink)
         liveStatus.text = "Checking the Groq connection…"
-        stopPulse()
         startPulse(pink)
 
         Thread {
@@ -474,11 +556,8 @@ class MainActivity : Activity() {
 
     private fun toggleKeyVisibility() {
         val end = keyInput.selectionEnd
-        val visible =
-            keyInput.inputType == (
-                InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-            )
+        val visible = keyInput.inputType ==
+            (InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
 
         if (visible) {
             keyInput.inputType =
@@ -505,11 +584,11 @@ class MainActivity : Activity() {
         val service = PhoneAgentAccessibilityService.instance
         if (service == null) {
             addAgent("Accessibility is off. Enable Shakin Agent in Android Accessibility settings.")
-            refreshUiState()
             return
         }
 
         showProgress("Understanding your request…")
+
         service.submit(
             command,
             { response ->
@@ -519,6 +598,9 @@ class MainActivity : Activity() {
                 runOnUiThread { showProgress(progress) }
             }
         )
+
+        input.clearFocus()
+        scrollContentBottom()
         refreshUiState()
     }
 
@@ -527,28 +609,31 @@ class MainActivity : Activity() {
 
         try {
             val json = JSONObject(raw)
-
             if (json.optBoolean("requiresConfirmation", false)) {
                 confirmPanel.visibility = View.VISIBLE
                 animateIn(confirmPanel)
                 addAgent(json.optString("message", "Please confirm this action."))
+                scrollContentBottom()
+                return
+            }
+
+            val error = json.optString("error")
+            if (error.isNotBlank()) {
+                addAgent("Error: " + error)
             } else {
-                val error = json.optString("error")
-                if (error.isNotBlank()) {
-                    addAgent("Error: " + error)
-                } else {
-                    addAgent(json.optString("message", "Done."))
-                }
+                addAgent(json.optString("message", "Done."))
             }
         } catch (_: Exception) {
             addAgent(raw.ifBlank { "Done." })
         }
 
+        scrollContentBottom()
         refreshUiState()
     }
 
     private fun showProgress(message: String) {
         if (message.isBlank()) return
+
         liveStatus.text = message
         statusText.text = "Working"
         statusDot.background = rounded(orange)
@@ -556,23 +641,20 @@ class MainActivity : Activity() {
 
         val bubble = progressBubble
         if (bubble == null) {
-            val newBubble = TextView(this).apply {
+            val created = TextView(this).apply {
                 text = message
                 textSize = 12.5f
                 setTextColor(pinkDark)
                 setPadding(dp(13), dp(11), dp(13), dp(11))
                 background = strokeRounded(pinkSofter, border, 18)
-                layoutParams = LinearLayout.LayoutParams(
-                    (resources.displayMetrics.widthPixels * 0.84f).toInt(),
-                    -2
-                ).also {
+                layoutParams = LinearLayout.LayoutParams(-2, -2).also {
                     it.gravity = Gravity.START
                     it.setMargins(0, dp(5), 0, dp(5))
                 }
             }
-            progressBubble = newBubble
-            chat.addView(newBubble)
-            animateIn(newBubble)
+            progressBubble = created
+            chat.addView(created)
+            animateIn(created)
         } else {
             bubble.text = message
             bubble.animate()
@@ -584,7 +666,7 @@ class MainActivity : Activity() {
                 .start()
         }
 
-        chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        scrollContentBottom()
     }
 
     private fun finishProgress() {
@@ -615,9 +697,7 @@ class MainActivity : Activity() {
             service != null && hasKey -> {
                 statusText.text = "Ready"
                 statusDetail.text = "Groq is configured and Accessibility is active."
-                if (liveStatus.text.isNullOrBlank() || liveStatus.text.toString() == "Understanding your request…") {
-                    liveStatus.text = "Ready when you are."
-                }
+                if (liveStatus.text.isNullOrBlank()) liveStatus.text = "Ready when you are."
                 statusDot.background = rounded(green)
                 stopPulse()
             }
@@ -667,8 +747,13 @@ class MainActivity : Activity() {
 
         chat.addView(bubble)
         animateIn(bubble)
+        scrollContentBottom()
+    }
 
-        chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+    private fun scrollContentBottom() {
+        contentScroll.post {
+            contentScroll.fullScroll(View.FOCUS_DOWN)
+        }
     }
 
     private fun togglePanel(panel: View) {
@@ -679,6 +764,7 @@ class MainActivity : Activity() {
             panel.visibility = View.VISIBLE
             animateIn(panel)
         }
+        scrollContentBottom()
     }
 
     private fun animateIn(view: View) {
@@ -705,30 +791,20 @@ class MainActivity : Activity() {
             .start()
     }
 
-    private fun animateComposer(keyboard: Boolean) {
-        val target = if (keyboard) -dp(3).toFloat() else 0f
-        composer.animate()
-            .translationY(target)
-            .setDuration(180)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
-    }
-
-    private fun installKeyboardAnimation() {
-        root.viewTreeObserver.addOnGlobalLayoutListener {
+    private fun installKeyboardWatcher() {
+        keyboardWatcher = ViewTreeObserver.OnGlobalLayoutListener {
             val rect = android.graphics.Rect()
             root.getWindowVisibleDisplayFrame(rect)
-            val heightDiff = root.rootView.height - rect.bottom
-            val keyboardOpen = heightDiff > dp(180)
+            val keyboardHeight = root.rootView.height - rect.bottom
+            val keyboardOpen = keyboardHeight > dp(180)
 
-            root.post {
-                if (keyboardOpen) {
-                    animateComposer(true)
-                } else {
-                    animateComposer(false)
-                }
-            }
+            composer.animate()
+                .translationY(if (keyboardOpen) -dp(5).toFloat() else 0f)
+                .setDuration(180)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
         }
+        root.viewTreeObserver.addOnGlobalLayoutListener(keyboardWatcher)
     }
 
     private fun buildCrashSafeUi(error: Throwable) {
@@ -745,23 +821,25 @@ class MainActivity : Activity() {
             setTextColor(pinkDark)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(-1, -2))
+        })
 
         safeRoot.addView(TextView(this).apply {
-            text = "The main interface hit a startup error. Please reopen the app after this repair build."
+            text = "Startup error detected. This screen is safe and stays open."
             textSize = 13f
             setTextColor(muted)
             gravity = Gravity.CENTER
             setPadding(0, dp(12), 0, dp(16))
-        }, LinearLayout.LayoutParams(-1, -2))
+        })
 
-        safeRoot.addView(primaryButton("Open Accessibility settings") {
-            try {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } catch (_: Exception) {
-                addAgent("Unable to open Accessibility settings.")
-            }
-        }, LinearLayout.LayoutParams(-1, dp(48)))
+        safeRoot.addView(
+            primaryButton("Open Accessibility settings") {
+                try {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                } catch (_: Exception) {
+                }
+            },
+            LinearLayout.LayoutParams(-1, dp(48))
+        )
 
         safeRoot.addView(TextView(this).apply {
             text = error.message?.take(180) ?: "Unknown startup error"
@@ -769,11 +847,10 @@ class MainActivity : Activity() {
             setTextColor(muted)
             gravity = Gravity.CENTER
             setPadding(0, dp(12), 0, 0)
-        }, LinearLayout.LayoutParams(-1, -2))
+        })
 
         setContentView(safeRoot)
     }
-
 
     private fun startPulse(color: Int) {
         statusDot.background = rounded(color)
@@ -790,7 +867,7 @@ class MainActivity : Activity() {
     private fun stopPulse() {
         pulseAnimator?.cancel()
         pulseAnimator = null
-        statusDot.alpha = 1f
+        if (::statusDot.isInitialized) statusDot.alpha = 1f
     }
 
     private fun primaryButton(label: String, onClick: () -> Unit): Button =
@@ -824,12 +901,10 @@ class MainActivity : Activity() {
                     v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(80).start()
                     false
                 }
-
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                     false
                 }
-
                 else -> false
             }
         }
@@ -878,10 +953,7 @@ class MainActivity : Activity() {
     private fun startVoiceInput() {
         try {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-                )
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Tell your phone what to do")
             }
@@ -891,11 +963,7 @@ class MainActivity : Activity() {
         }
     }
 
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != voiceRequestCode || resultCode != RESULT_OK) return
 
