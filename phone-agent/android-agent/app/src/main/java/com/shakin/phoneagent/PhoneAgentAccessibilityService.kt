@@ -138,16 +138,30 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         ).containsMatchIn(command)
 
         var lastMessage = "Working…"
+        var recoveryNote = ""
 
         repeat(24) {
-            callbackOnMain(progressCallback, "Thinking about the next step…")
+            callbackOnMain(progressCallback, "Reading the current screen…")
 
-            val plan = Planner.next(command, snapshot(), launcherApps(), apiKey)
+            val planningCommand = if (recoveryNote.isBlank()) {
+                command
+            } else {
+                command + "\n\nPrevious attempt failed. Treat this as live evidence and choose a different visible path:\n" + recoveryNote
+            }
+
+            val plan = Planner.next(planningCommand, snapshot(), launcherApps(), apiKey)
             lastMessage = plan.message
 
             if (plan.actions.isEmpty() || plan.done) {
                 if (lastMessage.startsWith("Groq error:", true)) {
                     return error(lastMessage)
+                }
+
+                if (isRecoverablePlannerMessage(lastMessage)) {
+                    recoveryNote = lastMessage.take(500)
+                    callbackOnMain(progressCallback, "I hit a UI mismatch. Re-checking the screen…")
+                    Thread.sleep(160)
+                    return@repeat
                 }
 
                 callbackOnMain(progressCallback, lastMessage.ifBlank { "Done." })
@@ -175,8 +189,16 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
             val result = execute(plan, progressCallback)
             val parsed = JSONObject(result)
-            if (parsed.optString("error").isNotBlank()) return result
+            val failure = parsed.optString("error").trim()
 
+            if (failure.isNotBlank()) {
+                recoveryNote = failure.take(700)
+                callbackOnMain(progressCallback, "That step did not match the current screen. Recovering automatically…")
+                Thread.sleep(180)
+                return@repeat
+            }
+
+            recoveryNote = ""
             Thread.sleep(postBatchDelay(plan))
         }
 
