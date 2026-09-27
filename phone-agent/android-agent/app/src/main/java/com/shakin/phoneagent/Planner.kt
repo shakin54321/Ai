@@ -77,8 +77,10 @@ Core rules:
 8. For long multi-step tasks, do a small batch, then let the host re-plan.
 9. Set done=true only when the request is complete or genuinely needs no action.
 10. Use risky=true for sending/posting/calling/deleting/purchasing/payment/account/security changes.
-11. For "in background" wording, set background=true on app-opening actions, but do not pretend the OS can hide arbitrary UI automation.
-12. Keep message short and user-friendly, describing the current step.
+11. For "in background" wording: do NOT launch an interactive third-party app. Android Accessibility automation needs the target app's visible UI unless that app exposes its own background/API action.
+12. Only use open_app_background for a true app-provided background action; otherwise finish with a clear limitation message rather than bringing the app to the foreground.
+13. For "in front", normal open_app and visible UI actions are allowed.
+14. Keep message short and user-friendly, describing the current step.
 
 Current screen and installed apps are supplied below.
 """.trimIndent()
