@@ -540,32 +540,55 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             .trim()
 
     private fun tapTextRetry(target: String): Boolean {
-        repeat(4) {
+        val aliases = semanticAliases(target)
+        repeat(5) { attempt ->
             if (tapText(target)) return true
-            Thread.sleep(550)
+            for (alias in aliases) {
+                if (tapText(alias)) return true
+            }
+
+            if (attempt == 1) {
+                if (tapCommonAddControl(target)) return true
+                if (tapCommonSearchControl(target)) return true
+            }
+
+            if (attempt == 2) {
+                runCatching { scroll("up") }
+            } else if (attempt == 3) {
+                runCatching { scroll("down") }
+            }
+            Thread.sleep(if (attempt < 2) 250L else 380L)
         }
         return false
     }
 
     private fun tapDescriptionRetry(target: String): Boolean {
-        repeat(4) {
+        val aliases = semanticAliases(target)
+        repeat(5) {
             if (tapDescription(target)) return true
-            Thread.sleep(550)
+            for (alias in aliases) {
+                if (tapDescription(alias)) return true
+            }
+            Thread.sleep(300)
         }
         return false
     }
 
     private fun tapText(target: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val node = findNodeSmart(root, target) ?: return false
-        return clickNode(node)
+        for (root in candidateRoots()) {
+            val node = findNodeSmart(root, target) ?: continue
+            if (clickNode(node)) return true
+        }
+        return false
     }
 
     private fun tapDescription(target: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val node = findNode(root, target, true) ?: findNodeSmart(root, target)
-            ?: return false
-        return clickNode(node)
+        for (root in candidateRoots()) {
+            val node = findNode(root, target, true) ?: findNodeSmart(root, target)
+                ?: continue
+            if (clickNode(node)) return true
+        }
+        return false
     }
 
     private fun findNodeSmart(
@@ -607,6 +630,70 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         value.lowercase()
             .replace(Regex("[^a-z0-9]+"), " ")
             .trim()
+
+    private fun semanticAliases(target: String): List<String> {
+        val key = normalizeUiText(target)
+        return when {
+            key == "new" || key.contains("new file") || key.contains("new folder") ->
+                listOf("create new", "create", "add", "plus", "new file", "new folder")
+            key == "search" || key.contains("search") ->
+                listOf("find", "search files", "search in files")
+            key == "send" || key.contains("send") ->
+                listOf("submit", "done", "go")
+            key == "save" ->
+                listOf("done", "ok")
+            key == "more" || key.contains("more options") ->
+                listOf("more options", "menu", "options")
+            key == "close" ->
+                listOf("cancel", "dismiss", "back")
+            else -> emptyList()
+        }
+    }
+
+    private fun tapCommonAddControl(target: String): Boolean {
+        val key = normalizeUiText(target)
+        if (!key.contains("new") && key != "create") return false
+
+        val candidates = listOf(
+            "add", "create", "new", "new file", "new folder",
+            "plus", "add new", "create new", "more options", "menu"
+        )
+
+        for (root in candidateRoots()) {
+            for (candidate in candidates) {
+                val node = findNodeSmart(root, candidate) ?: continue
+                if (clickNode(node)) return true
+            }
+        }
+        return false
+    }
+
+    private fun tapCommonSearchControl(target: String): Boolean {
+        val key = normalizeUiText(target)
+        if (!key.contains("search")) return false
+
+        val candidates = listOf("search", "find", "search files")
+        for (root in candidateRoots()) {
+            for (candidate in candidates) {
+                val node = findNodeSmart(root, candidate) ?: continue
+                if (clickNode(node)) return true
+            }
+        }
+        return false
+    }
+
+    private fun candidateRoots(): List<AccessibilityNodeInfo> {
+        val roots = mutableListOf<AccessibilityNodeInfo>()
+        rootInActiveWindow?.let { roots += it }
+        runCatching {
+            windows.asSequence()
+                .mapNotNull { it.root }
+                .forEach { root ->
+                    if (roots.none { it === root }) roots += root
+                }
+        }
+        return roots
+    }
 
     private fun longPressText(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
@@ -667,9 +754,22 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     }
 
     private fun typeFocused(value: String): Boolean {
-        val field = rootInActiveWindow?.findFocus(
-            AccessibilityNodeInfo.FOCUS_INPUT
-        ) ?: return false
+        val root = rootInActiveWindow ?: return false
+
+        var field = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (field == null || !field.isEditable) {
+            field = findEditable(root)
+        }
+
+        if (field == null) return false
+
+        if (!field.isFocused) {
+            clickNode(field)
+            Thread.sleep(220)
+        }
+
+        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: field
 
         val args = Bundle().apply {
             putCharSequence(
@@ -678,10 +778,20 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             )
         }
 
-        return field.performAction(
+        return focused.performAction(
             AccessibilityNodeInfo.ACTION_SET_TEXT,
             args
         )
+    }
+
+    private fun findEditable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isEditable && node.isVisibleToUser && node.isEnabled) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findEditable(child)
+            if (found != null) return found
+        }
+        return null
     }
 
     private fun tapCoordinates(x: Int, y: Int) {
@@ -835,44 +945,77 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     }
 
     private fun snapshot(): String {
-        val root = rootInActiveWindow ?: return "(no visible UI)"
+        val roots = candidateRoots()
+        if (roots.isEmpty()) return "(no visible UI)"
         val out = StringBuilder()
 
-        out.append("package=")
-            .append(root.packageName?.toString().orEmpty())
-            .append('\n')
+        for ((index, root) in roots.withIndex()) {
+            if (out.length > 14_000) break
 
-        fun walk(node: AccessibilityNodeInfo, depth: Int) {
-            if (depth > 18 || out.length > 12_000) return
+            out.append("window[").append(index).append("] package=")
+                .append(root.packageName?.toString().orEmpty())
+                .append('\n')
 
-            val values = listOfNotNull(
-                node.text?.toString(),
-                node.contentDescription?.toString()
-            )
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-                .distinct()
+            fun walk(node: AccessibilityNodeInfo, depth: Int) {
+                if (depth > 18 || out.length > 14_000) return
 
-            if (values.isNotEmpty()) {
-                val flags = buildString {
-                    if (node.isClickable) append(" clickable")
-                    if (node.isEditable) append(" editable")
-                    if (node.isScrollable) append(" scrollable")
-                    if (node.isCheckable) append(" checkable")
-                    if (node.isChecked) append(" checked")
+                val values = listOfNotNull(
+                    node.text?.toString(),
+                    node.contentDescription?.toString(),
+                    node.hintText?.toString()
+                )
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+
+                val interesting = values.isNotEmpty() ||
+                    node.isClickable || node.isEditable || node.isScrollable
+
+                if (interesting) {
+                    val flags = buildString {
+                        if (node.isClickable) append(" clickable")
+                        if (node.isEditable) append(" editable")
+                        if (node.isFocused) append(" focused")
+                        if (node.isScrollable) append(" scrollable")
+                        if (node.isCheckable) append(" checkable")
+                        if (node.isChecked) append(" checked")
+                    }
+
+                    val rect = Rect()
+                    node.getBoundsInScreen(rect)
+                    val bounds = if (!rect.isEmpty && (node.isClickable || node.isEditable)) {
+                        " bounds=" + rect.left + "," + rect.top + "," + rect.right + "," + rect.bottom
+                    } else {
+                        ""
+                    }
+
+                    out.append(
+                        if (values.isEmpty()) "[untitled]" else values.joinToString(" | ")
+                    )
+                        .append(flags)
+                        .append(bounds)
+                        .append('\n')
                 }
-                out.append(values.joinToString(" | "))
-                    .append(flags)
-                    .append('\n')
+
+                for (i in 0 until node.childCount) {
+                    node.getChild(i)?.let { walk(it, depth + 1) }
+                }
             }
 
-            for (i in 0 until node.childCount) {
-                node.getChild(i)?.let { walk(it, depth + 1) }
-            }
+            walk(root, 0)
         }
 
-        walk(root, 0)
         return out.toString()
+    }
+
+    private fun isRecoverablePlannerMessage(message: String): Boolean {
+        val key = normalizeUiText(message)
+        return key.contains("could not find") ||
+            key.contains("can t see") ||
+            key.contains("not visible") ||
+            key.contains("no focused text field") ||
+            key.contains("cant find") ||
+            key.contains("cannot find")
     }
 
     private fun sensitive(command: String): Boolean =
