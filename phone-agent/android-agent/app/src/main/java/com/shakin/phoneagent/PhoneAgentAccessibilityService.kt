@@ -67,7 +67,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 val body = buildString { repeat(len) { append(r.read().toChar()) } }
                 val result = route(method, path, headers, body)
                 val bytes = result.toByteArray(Charsets.UTF_8)
-                val head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, X-Agent-Token\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                val head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, X-Agent-Token\r\nAccess-Control-Allow-Private-Network: true\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
                 socket.getOutputStream().apply { write(head.toByteArray()); write(bytes); flush() }
             } catch (_: Exception) {}
         }
