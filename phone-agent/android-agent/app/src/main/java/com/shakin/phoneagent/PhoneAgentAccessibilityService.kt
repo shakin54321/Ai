@@ -13,16 +13,21 @@ import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 class PhoneAgentAccessibilityService : AccessibilityService() {
     private val executor = Executors.newCachedThreadPool()
     private val main = Handler(Looper.getMainLooper())
     private var server: ServerSocket? = null
-    private var pending: Planner.Plan? = null
+    @Volatile private var pending: Planner.Plan? = null
+    @Volatile private var cloudThread: Thread? = null
+    private val cloudBase = "https://shakin-agent.hatchable.site"
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -34,6 +39,8 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 }
             } catch (_: Exception) {}
         }
+        cloudThread?.interrupt()
+        cloudThread = Thread { cloudLoop() }.also { it.start() }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
@@ -41,8 +48,93 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         try { server?.close() } catch (_: Exception) {}
+        cloudThread?.interrupt()
         executor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun cloudLoop() {
+        while (!Thread.currentThread().isInterrupted) {
+            try {
+                val command = pollCloud()
+                Thread.sleep(if (command) 450L else 1800L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
+            } catch (_: Exception) {
+                try { Thread.sleep(4000L) } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+        }
+    }
+
+    private fun tokenHash(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun cloudRequest(path: String, body: JSONObject): JSONObject {
+        val connection = (URL(cloudBase + path).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 10000
+            readTimeout = 15000
+            setRequestProperty("Content-Type", "application/json")
+        }
+        return try {
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.readText().orEmpty()
+            if (text.isBlank()) JSONObject().put("error", "Empty cloud response") else JSONObject(text)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun pollCloud(): Boolean {
+        val t = token()
+        if (t.isBlank()) return false
+        val response = cloudRequest("/api/agent/poll", JSONObject().put("token", t))
+        val command = response.optJSONObject("command") ?: return false
+        val id = command.optLong("id", 0L)
+        val kind = command.optString("kind", "command")
+        if (id <= 0L) return false
+
+        val result = when (kind) {
+            "command" -> {
+                val text = command.optString("command", "").trim()
+                if (text.isBlank()) {
+                    JSONObject().put("error", "Empty command")
+                } else {
+                    JSONObject(process(text))
+                }
+            }
+            "confirm" -> {
+                val plan = pending
+                pending = null
+                if (plan == null) {
+                    JSONObject().put("error", "No pending action")
+                } else {
+                    JSONObject(execute(plan))
+                }
+            }
+            "cancel" -> {
+                pending = null
+                JSONObject().put("ok", true).put("message", "Cancelled.")
+            }
+            else -> JSONObject().put("error", "Unknown cloud action")
+        }
+
+        cloudRequest(
+            "/api/agent/respond",
+            JSONObject()
+                .put("token", t)
+                .put("id", id)
+                .put("result", result)
+        )
+        return true
     }
 
     private fun token() = getSharedPreferences("agent", MODE_PRIVATE).getString("token", "") ?: ""
