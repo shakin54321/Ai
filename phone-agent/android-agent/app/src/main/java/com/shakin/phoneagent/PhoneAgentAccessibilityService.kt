@@ -3,14 +3,17 @@ package com.shakin.phoneagent
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Path
 import android.graphics.Rect
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
@@ -47,7 +50,11 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     fun isWorking(): Boolean = working
     fun hasPendingConfirmation(): Boolean = pending != null
 
-    fun submit(command: String, callback: (String) -> Unit) {
+    fun submit(
+        command: String,
+        callback: (String) -> Unit,
+        progressCallback: (String) -> Unit = {}
+    ) {
         val clean = command.trim()
         if (clean.isBlank()) {
             main.post { callback(error("Tell me what you want me to do.")) }
@@ -61,7 +68,9 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         executor.execute {
             working = true
             try {
-                callbackOnMain(callback, runAgent(clean))
+                callbackOnMain(progressCallback, "Understanding your request…")
+                val response = runAgent(clean, progressCallback)
+                callbackOnMain(callback, response)
             } catch (e: Exception) {
                 callbackOnMain(callback, error(e.message ?: "Agent failed."))
             } finally {
@@ -80,7 +89,9 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         executor.execute {
             working = true
             try {
-                callbackOnMain(callback, execute(plan))
+                callbackOnMain(callback, execute(plan) { action ->
+                    "Confirmed: " + actionProgress(action)
+                })
             } catch (e: Exception) {
                 callbackOnMain(callback, error(e.message ?: "Action failed."))
             } finally {
@@ -94,15 +105,24 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         return ok("Cancelled.")
     }
 
-    private fun runAgent(command: String): String {
-        val local = localPlan(command)
+    private fun runAgent(
+        command: String,
+        progressCallback: (String) -> Unit
+    ): String {
+        val localChat = localChat(command)
+        if (localChat != null) {
+            callbackOnMain(progressCallback, "Replying…")
+            return ok(localChat)
+        }
 
+        val local = localPlan(command)
         if (local != null) {
             if (local.risky || sensitive(command)) {
                 pending = local
+                callbackOnMain(progressCallback, "Confirmation required.")
                 return confirmation(local.message)
             }
-            return execute(local)
+            return execute(local, progressCallback)
         }
 
         val apiKey = SecureStore(this).get()
@@ -112,31 +132,52 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
         var lastMessage = "Working…"
 
-        repeat(18) {
+        repeat(24) {
+            callbackOnMain(progressCallback, "Thinking about the next step…")
+
             val plan = Planner.next(command, snapshot(), launcherApps(), apiKey)
             lastMessage = plan.message
 
             if (plan.actions.isEmpty() || plan.done) {
-                return if (lastMessage.startsWith("Groq error:", true)) {
-                    error(lastMessage)
-                } else {
-                    ok(lastMessage.ifBlank { "Done." })
+                if (lastMessage.startsWith("Groq error:", true)) {
+                    return error(lastMessage)
                 }
+
+                callbackOnMain(progressCallback, lastMessage.ifBlank { "Done." })
+                return ok(lastMessage.ifBlank { "Done." })
             }
 
             if (plan.risky || sensitive(command)) {
                 pending = plan
+                callbackOnMain(progressCallback, "Confirmation required.")
                 return confirmation(lastMessage.ifBlank { "Please confirm this action." })
             }
 
-            val result = execute(plan)
+            val result = execute(plan, progressCallback)
             val parsed = JSONObject(result)
             if (parsed.optString("error").isNotBlank()) return result
 
-            Thread.sleep(350)
+            Thread.sleep(postBatchDelay(plan))
         }
 
         return ok(lastMessage.ifBlank { "Finished the available steps." })
+    }
+
+    private fun localChat(command: String): String? {
+        val lower = command.trim().lowercase()
+        return when {
+            lower in setOf("hi", "hello", "hey", "yo", "hiya", "হাই", "হ্যালো") ->
+                "Hi! I'm ready. Tell me what you want me to do on your phone."
+            lower.contains("how are you") || lower.contains("কেমন আছ") ->
+                "I'm ready and working. Give me a phone task or ask me anything."
+            lower.contains("who are you") || lower.contains("তুমি কে") ->
+                "I'm Shakin Agent — your phone-control assistant."
+            lower.contains("what can you do") || lower.contains("কি করতে পার") ->
+                "I can control visible phone UI, open apps, tap, type, scroll, navigate, and handle multi-step tasks."
+            lower in setOf("thanks", "thank you", "ধন্যবাদ") ->
+                "You're welcome."
+            else -> null
+        }
     }
 
     private fun localPlan(command: String): Planner.Plan? {
@@ -152,6 +193,34 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
             lower == "recents" || lower == "open recents" ->
                 Planner.Plan("Opening Recents.", listOf(Planner.Action("recents")))
+
+            lower == "notifications" || lower == "open notifications" ->
+                Planner.Plan("Opening notifications.", listOf(Planner.Action("notifications")))
+
+            lower == "quick settings" || lower == "open quick settings" ->
+                Planner.Plan("Opening quick settings.", listOf(Planner.Action("quick_settings")))
+
+            lower == "power menu" || lower == "open power menu" ->
+                Planner.Plan("Opening the power menu.", listOf(Planner.Action("power_dialog")))
+
+            lower == "lock phone" || lower == "lock screen" ->
+                Planner.Plan(
+                    "Locking the phone.",
+                    listOf(Planner.Action("lock_screen")),
+                    risky = true
+                )
+
+            lower == "volume up" || lower == "increase volume" ->
+                Planner.Plan("Turning volume up.", listOf(Planner.Action("volume_up")))
+
+            lower == "volume down" || lower == "decrease volume" ->
+                Planner.Plan("Turning volume down.", listOf(Planner.Action("volume_down")))
+
+            lower == "mute" || lower == "mute volume" ->
+                Planner.Plan("Muting media volume.", listOf(Planner.Action("mute")))
+
+            lower == "settings" || lower == "open settings" ->
+                Planner.Plan("Opening Settings.", listOf(Planner.Action("open_settings")))
 
             lower.startsWith("open http://") || lower.startsWith("open https://") ->
                 Planner.Plan(
@@ -187,11 +256,16 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun execute(plan: Planner.Plan): String {
+    private fun execute(
+        plan: Planner.Plan,
+        progressCallback: (String) -> Unit = {}
+    ): String {
         return try {
             for (action in plan.actions) {
+                callbackOnMain(progressCallback, actionProgress(action))
+
                 when (action.type) {
-                    "open_app" -> launchByLabel(action.arg)
+                    "open_app", "open_app_background" -> launchByLabel(action.arg)
 
                     "tap_text" -> check(
                         tapText(action.arg),
@@ -204,16 +278,25 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                     )
 
                     "tap_coordinates" -> {
-                        val parts = action.arg.split(",")
-                        check(parts.size == 2, "Tap coordinates are invalid.")
-                        tapCoordinates(
-                            parts[0].trim().toInt(),
-                            parts[1].trim().toInt()
+                        check(
+                            action.x >= 0 && action.y >= 0,
+                            "Tap coordinates are invalid."
                         )
+                        tapCoordinates(action.x, action.y)
                     }
+
+                    "long_press_text" -> check(
+                        longPressText(action.arg),
+                        "I could not find the visible control: " + action.arg
+                    )
 
                     "type_text" -> check(
                         typeFocused(action.arg),
+                        "No focused text field was found."
+                    )
+
+                    "clear_text" -> check(
+                        typeFocused(""),
                         "No focused text field was found."
                     )
 
@@ -232,16 +315,46 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                         "Recents action failed."
                     )
 
+                    "notifications" -> check(
+                        performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS),
+                        "Could not open notifications."
+                    )
+
+                    "quick_settings" -> check(
+                        performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS),
+                        "Could not open quick settings."
+                    )
+
+                    "power_dialog" -> check(
+                        performGlobalAction(GLOBAL_ACTION_POWER_DIALOG),
+                        "Could not open the power menu."
+                    )
+
+                    "lock_screen" -> check(
+                        performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN),
+                        "Could not lock the screen."
+                    )
+
                     "swipe" -> swipe(action.arg)
 
                     "scroll" -> scroll(action.arg)
 
                     "open_url" -> openUrl(action.arg)
 
-                    "wait" -> Thread.sleep(action.ms.coerceIn(50L, 5000L))
+                    "open_settings" -> openSettings()
+
+                    "volume_up" -> changeVolume(AudioManager.ADJUST_RAISE)
+
+                    "volume_down" -> changeVolume(AudioManager.ADJUST_LOWER)
+
+                    "mute" -> changeVolume(AudioManager.ADJUST_MUTE)
+
+                    "wait" -> Thread.sleep(action.ms.coerceIn(100L, 6000L))
+
+                    else -> throw IllegalArgumentException("Unsupported action: " + action.type)
                 }
 
-                Thread.sleep(260)
+                Thread.sleep(actionDelay(action.type))
             }
 
             ok(plan.message.ifBlank { "Done." })
@@ -249,6 +362,50 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             error(e.message ?: "Action failed.")
         }
     }
+
+    private fun actionProgress(action: Planner.Action): String =
+        when (action.type) {
+            "open_app" -> "Opening " + action.arg + "…"
+            "open_app_background" -> "Opening " + action.arg + " in background…"
+            "tap_text" -> "Tapping \"" + action.arg + "\"…"
+            "tap_description" -> "Tapping control…"
+            "tap_coordinates" -> "Tapping the screen…"
+            "long_press_text" -> "Long-pressing \"" + action.arg + "\"…"
+            "type_text" -> "Typing…"
+            "clear_text" -> "Clearing the text field…"
+            "back" -> "Going back…"
+            "home" -> "Going home…"
+            "recents" -> "Opening recent apps…"
+            "notifications" -> "Opening notifications…"
+            "quick_settings" -> "Opening quick settings…"
+            "power_dialog" -> "Opening power menu…"
+            "lock_screen" -> "Locking the phone…"
+            "swipe" -> "Swiping " + action.arg + "…"
+            "scroll" -> "Scrolling…"
+            "open_url" -> "Opening the link…"
+            "open_settings" -> "Opening Settings…"
+            "volume_up" -> "Increasing volume…"
+            "volume_down" -> "Decreasing volume…"
+            "mute" -> "Muting media…"
+            "wait" -> "Waiting…"
+            else -> "Working…"
+        }
+
+    private fun actionDelay(type: String): Long =
+        when (type) {
+            "open_app", "open_app_background", "open_url", "open_settings" -> 950L
+            "tap_text", "tap_description", "tap_coordinates", "long_press_text" -> 450L
+            "type_text", "clear_text" -> 350L
+            "swipe", "scroll" -> 500L
+            else -> 300L
+        }
+
+    private fun postBatchDelay(plan: Planner.Plan): Long =
+        if (plan.actions.any { it.type == "open_app" || it.type == "open_app_background" || it.type == "open_url" }) {
+            850L
+        } else {
+            350L
+        }
 
     private fun launchByLabel(label: String) {
         val target = normalizeAppName(label)
@@ -269,8 +426,8 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         }
 
         val partial = activities.firstOrNull {
-            normalizeAppName(it.loadLabel(pm).toString()).contains(target) ||
-                target.contains(normalizeAppName(it.loadLabel(pm).toString()))
+            val labelName = normalizeAppName(it.loadLabel(pm).toString())
+            labelName.contains(target) || target.contains(labelName)
         }
 
         val chosen = exact ?: partial
@@ -304,6 +461,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     private fun packageFallback(target: String): String? = when {
         target == "youtube" || target == "yt" -> "com.google.android.youtube"
         target == "whatsapp" -> "com.whatsapp"
+        target == "imo" -> "com.imo.android.imoim"
         target == "telegram" -> "org.telegram.messenger"
         target == "chrome" || target == "google chrome" -> "com.android.chrome"
         target == "instagram" -> "com.instagram.android"
@@ -326,6 +484,15 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return false
         val node = findNode(root, target, true) ?: return false
         return clickNode(node)
+    }
+
+    private fun longPressText(target: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val node = findNode(root, target, false) ?: return false
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (rect.isEmpty) return false
+        return longPressCoordinates(rect.centerX(), rect.centerY())
     }
 
     private fun findNode(
@@ -401,16 +568,12 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             "Tap coordinate is outside the screen."
         }
 
-        val path = Path().apply {
-            moveTo(x.toFloat(), y.toFloat())
-        }
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
 
         check(
             dispatchGesture(
                 GestureDescription.Builder()
-                    .addStroke(
-                        GestureDescription.StrokeDescription(path, 0, 90)
-                    )
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 90))
                     .build(),
                 null,
                 main
@@ -418,6 +581,21 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         ) { "Tap gesture failed." }
 
         Thread.sleep(220)
+    }
+
+    private fun longPressCoordinates(x: Int, y: Int): Boolean {
+        val dm = resources.displayMetrics
+        if (x !in 0 until dm.widthPixels || y !in 0 until dm.heightPixels) return false
+
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+
+        return dispatchGesture(
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, 760))
+                .build(),
+            null,
+            main
+        )
     }
 
     private fun swipe(direction: String) {
@@ -430,20 +608,20 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
         when (direction.lowercase()) {
             "up" -> {
-                start = centerX to dm.heightPixels * .78f
-                end = centerX to dm.heightPixels * .22f
+                start = centerX to dm.heightPixels * .80f
+                end = centerX to dm.heightPixels * .20f
             }
             "down" -> {
-                start = centerX to dm.heightPixels * .22f
-                end = centerX to dm.heightPixels * .78f
+                start = centerX to dm.heightPixels * .20f
+                end = centerX to dm.heightPixels * .80f
             }
             "left" -> {
-                start = dm.widthPixels * .82f to centerY
-                end = dm.widthPixels * .18f to centerY
+                start = dm.widthPixels * .84f to centerY
+                end = dm.widthPixels * .16f to centerY
             }
             "right" -> {
-                start = dm.widthPixels * .18f to centerY
-                end = dm.widthPixels * .82f to centerY
+                start = dm.widthPixels * .16f to centerY
+                end = dm.widthPixels * .84f to centerY
             }
             else -> throw IllegalArgumentException("Invalid swipe direction.")
         }
@@ -456,9 +634,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         check(
             dispatchGesture(
                 GestureDescription.Builder()
-                    .addStroke(
-                        GestureDescription.StrokeDescription(path, 0, 420)
-                    )
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 420))
                     .build(),
                 null,
                 main
@@ -496,16 +672,29 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
 
     private fun openUrl(url: String) {
         require(
-            url.startsWith("http://", true) ||
-                url.startsWith("https://", true)
+            url.startsWith("http://", true) || url.startsWith("https://", true)
         ) { "Only http(s) URLs are supported." }
 
-        main.post {
-            startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        }
+        startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    private fun openSettings() {
+        startActivity(
+            Intent(Settings.ACTION_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    private fun changeVolume(direction: Int) {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audio.adjustStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            direction,
+            AudioManager.FLAG_SHOW_UI
+        )
     }
 
     private fun launcherApps(): String {
@@ -519,7 +708,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             .filter { it.isNotBlank() }
             .distinct()
             .sorted()
-            .take(220)
+            .take(280)
             .joinToString(", ")
     }
 
@@ -532,7 +721,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             .append('\n')
 
         fun walk(node: AccessibilityNodeInfo, depth: Int) {
-            if (depth > 15 || out.length > 9000) return
+            if (depth > 18 || out.length > 12_000) return
 
             val values = listOfNotNull(
                 node.text?.toString(),
@@ -543,7 +732,16 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 .distinct()
 
             if (values.isNotEmpty()) {
-                out.append(values.joinToString(" | ")).append('\n')
+                val flags = buildString {
+                    if (node.isClickable) append(" clickable")
+                    if (node.isEditable) append(" editable")
+                    if (node.isScrollable) append(" scrollable")
+                    if (node.isCheckable) append(" checkable")
+                    if (node.isChecked) append(" checked")
+                }
+                out.append(values.joinToString(" | "))
+                    .append(flags)
+                    .append('\n')
             }
 
             for (i in 0 until node.childCount) {
@@ -564,10 +762,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         JSONObject()
             .put("ok", true)
             .put("requiresConfirmation", true)
-            .put(
-                "message",
-                message.ifBlank { "Please confirm this action." }
-            )
+            .put("message", message.ifBlank { "Please confirm this action." })
             .toString()
 
     private fun callbackOnMain(
