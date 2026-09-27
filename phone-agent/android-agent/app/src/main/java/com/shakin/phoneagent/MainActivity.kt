@@ -1,5 +1,6 @@
 package com.shakin.phoneagent
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
@@ -7,6 +8,8 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.net.Uri
+import android.os.PowerManager
 import android.speech.RecognizerIntent
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
@@ -85,6 +88,7 @@ class MainActivity : Activity() {
 
             buildUi()
             installKeyboardWatcher()
+            maybeStartSavedRuntime()
             refreshUiState()
         } catch (e: Throwable) {
             buildCrashSafeUi(e)
@@ -281,6 +285,28 @@ class MainActivity : Activity() {
         row.addView(spaceH(7))
 
         row.addView(
+            primaryButton(
+                if (AgentRuntimeService.isEnabled(this)) "Always On" else "Enable Background"
+            ) {
+                toggleAlwaysOn()
+            },
+            LinearLayout.LayoutParams(0, dp(39), 1f)
+        )
+
+        val row2 = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        row2.addView(
+            pillButton("Keep Alive") {
+                requestBatteryExemption()
+            },
+            LinearLayout.LayoutParams(0, dp(39), 1f)
+        )
+
+        row2.addView(spaceH(7))
+
+        row2.addView(
             pillButton("Settings") {
                 togglePanel(settingsPanel)
             },
@@ -289,6 +315,8 @@ class MainActivity : Activity() {
 
         box.addView(space(8))
         box.addView(row)
+        box.addView(space(7))
+        box.addView(row2)
         return box
     }
 
@@ -517,6 +545,61 @@ class MainActivity : Activity() {
         return wrap
     }
 
+    private fun maybeStartSavedRuntime() {
+        if (!AgentRuntimeService.isEnabled(this)) return
+        runCatching { AgentRuntimeService.start(this) }
+        requestNotificationPermissionIfNeeded()
+    }
+
+    private fun toggleAlwaysOn() {
+        if (AgentRuntimeService.isEnabled(this)) {
+            AgentRuntimeService.stop(this)
+            liveStatus.text = "Background runtime stopped."
+        } else {
+            AgentRuntimeService.start(this)
+            requestNotificationPermissionIfNeeded()
+            liveStatus.text = "Always-on runtime enabled. The agent can keep working after you leave this screen."
+        }
+        refreshUiState()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    1201
+                )
+            }
+        }
+    }
+
+    private fun requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            liveStatus.text = "Battery optimization controls are not available on this Android version."
+            return
+        }
+
+        val power = getSystemService(PowerManager::class.java)
+        if (power?.isIgnoringBatteryOptimizations(packageName) == true) {
+            liveStatus.text = "Battery optimization is already disabled for Shakin Agent."
+            return
+        }
+
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        } catch (_: Exception) {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+    }
+
     private fun saveAndTestKey() {
         val key = keyInput.text.toString().trim()
         if (key.isBlank()) {
@@ -695,8 +778,13 @@ class MainActivity : Activity() {
             }
 
             service != null && hasKey -> {
-                statusText.text = "Ready"
-                statusDetail.text = "Groq is configured and Accessibility is active."
+                statusText.text = if (AgentRuntimeService.isEnabled(this)) "Always On" else "Ready"
+                statusDetail.text =
+                    if (AgentRuntimeService.isEnabled(this)) {
+                        "Groq + Accessibility active. Agent runtime stays alive in the background."
+                    } else {
+                        "Groq is configured and Accessibility is active."
+                    }
                 if (liveStatus.text.isNullOrBlank()) liveStatus.text = "Ready when you are."
                 statusDot.background = rounded(green)
                 stopPulse()
