@@ -76,7 +76,7 @@ Keep message under 120 characters.
                 done = true
             )
         }
-    
+    }
 
     private fun post(body: JSONObject, apiKey: String): JSONObject {
         val connection = (URL("https://api.groq.com/openai/v1/chat/completions")
