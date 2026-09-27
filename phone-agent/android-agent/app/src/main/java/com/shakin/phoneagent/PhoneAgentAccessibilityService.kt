@@ -145,7 +145,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             for (action in plan.actions) {
                 when (action.type) {
                     "open_app" -> launchByLabel(action.arg)
-                    "tap_text" -> check(tapText(action.arg), "Could not find '\${action.arg}'.")
+                    "tap_text" -> check(tapText(action.arg), "Could not find '" + action.arg + "'.")
                     "type_text" -> check(typeFocused(action.arg), "No focused text field.")
                     "tap_description" -> check(tapDescription(action.arg), "Could not find the requested control.")
                     "tap_coordinates" -> {
