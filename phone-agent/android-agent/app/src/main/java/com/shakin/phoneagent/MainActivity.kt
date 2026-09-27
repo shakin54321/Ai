@@ -12,9 +12,6 @@ import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
 import android.view.View
-import android.view.Window
-import android.view.WindowInsets
-import android.view.WindowInsetsAnimation
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
@@ -22,7 +19,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
-import android.widget.FrameLayout
 import android.graphics.drawable.GradientDrawable
 import android.animation.ObjectAnimator
 import android.view.animation.DecelerateInterpolator
@@ -64,31 +60,32 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.statusBarColor = Color.WHITE
-        window.navigationBarColor = Color.WHITE
-        window.setSoftInputMode(
-            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
-                WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
-        )
-
-        if (Build.VERSION.SDK_INT >= 30) {
-            window.setDecorFitsSystemWindows(true)
-            window.insetsController?.setSystemBarsAppearance(
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            )
-        } else {
+        try {
+            window.statusBarColor = Color.WHITE
+            window.navigationBarColor = Color.WHITE
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility =
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
-                    View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        }
+            window.setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+            )
 
-        buildUi()
-        installInsetsAnimation()
-        refreshUiState()
+            if (Build.VERSION.SDK_INT >= 23) {
+                @Suppress("DEPRECATION")
+                window.decorView.systemUiVisibility =
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+                        if (Build.VERSION.SDK_INT >= 26) {
+                            View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                        } else {
+                            0
+                        }
+            }
+
+            buildUi()
+            installKeyboardAnimation()
+            refreshUiState()
+        } catch (e: Throwable) {
+            buildCrashSafeUi(e)
+        }
     }
 
     override fun onResume() {
@@ -717,69 +714,66 @@ class MainActivity : Activity() {
             .start()
     }
 
-    private fun installInsetsAnimation() {
-        root.setOnApplyWindowInsetsListener { _, insets ->
-            applyInsets(insets)
-            insets
-        }
+    private fun installKeyboardAnimation() {
+        root.viewTreeObserver.addOnGlobalLayoutListener {
+            val rect = android.graphics.Rect()
+            root.getWindowVisibleDisplayFrame(rect)
+            val heightDiff = root.rootView.height - rect.bottom
+            val keyboardOpen = heightDiff > dp(180)
 
-        root.requestApplyInsets()
-
-        if (Build.VERSION.SDK_INT >= 30) {
-            root.setWindowInsetsAnimationCallback(
-                object : WindowInsetsAnimation.Callback(
-                    WindowInsetsAnimation.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE
-                ) {
-                    override fun onProgress(
-                        insets: WindowInsets,
-                        runningAnimations: MutableList<WindowInsetsAnimation>
-                    ): WindowInsets {
-                        applyInsets(insets)
-                        return insets
-                    }
-
-                    override fun onEnd(animation: WindowInsetsAnimation) {
-                        super.onEnd(animation)
-                        val insets = root.rootWindowInsets ?: return
-                        val ime = insets.getInsets(WindowInsets.Type.ime())
-                        val bars = insets.getInsets(WindowInsets.Type.systemBars())
-                        animateComposer(ime.bottom > bars.bottom)
-                    }
+            root.post {
+                if (keyboardOpen) {
+                    animateComposer(true)
+                } else {
+                    animateComposer(false)
                 }
-            )
-        }
-    }
-
-    private fun applyInsets(insets: WindowInsets) {
-        val bars = if (Build.VERSION.SDK_INT >= 30) {
-            insets.getInsets(WindowInsets.Type.systemBars())
-        } else {
-            @Suppress("DEPRECATION")
-            insets.systemWindowInsetBottom.let {
-                android.graphics.Insets.of(
-                    insets.systemWindowInsetLeft,
-                    insets.systemWindowInsetTop,
-                    insets.systemWindowInsetRight,
-                    it
-                )
             }
         }
+    }
 
-        val imeBottom = if (Build.VERSION.SDK_INT >= 30) {
-            insets.getInsets(WindowInsets.Type.ime()).bottom
-        } else {
-            0
+    private fun buildCrashSafeUi(error: Throwable) {
+        val safeRoot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            background = pageBackground()
         }
 
-        root.setPadding(
-            dp(16) + bars.left,
-            dp(12) + bars.top,
-            dp(16) + bars.right,
-            dp(10) + maxOf(bars.bottom, imeBottom)
-        )
+        safeRoot.addView(TextView(this).apply {
+            text = "Shakin Agent"
+            textSize = 24f
+            setTextColor(pinkDark)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2))
 
-        animateComposer(imeBottom > bars.bottom)
+        safeRoot.addView(TextView(this).apply {
+            text = "The main interface hit a startup error. Please reopen the app after this repair build."
+            textSize = 13f
+            setTextColor(muted)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(12), 0, dp(16))
+        }, LinearLayout.LayoutParams(-1, -2))
+
+        safeRoot.addView(primaryButton("Open Accessibility settings") {
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (_: Exception) {
+                addAgent("Unable to open Accessibility settings.")
+            }
+        }, LinearLayout.LayoutParams(-1, dp(48)))
+
+        safeRoot.addView(TextView(this).apply {
+            text = error.message?.take(180) ?: "Unknown startup error"
+            textSize = 9f
+            setTextColor(muted)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(12), 0, 0)
+        }, LinearLayout.LayoutParams(-1, -2))
+
+        setContentView(safeRoot)
     }
+
 
     private fun startPulse(color: Int) {
         statusDot.background = rounded(color)
