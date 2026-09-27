@@ -201,8 +201,12 @@ class MainActivity : Activity() {
 
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         row.addView(button("Save key", true) {
-            SecureStore(this@MainActivity).put(keyInput.text.toString().trim())
-            addAgent("AI key saved securely on this device.")
+            val saved = SecureStore(this@MainActivity).put(keyInput.text.toString().trim())
+            if (saved) {
+                addAgent("Groq API key saved and verified on this device.")
+            } else {
+                addAgent("Could not save the Groq API key. Please paste it again.")
+            }
             renderStatus()
         }, LinearLayout.LayoutParams(0, dp(44), 1f))
         row.addView(spaceH(8))
@@ -337,18 +341,20 @@ class MainActivity : Activity() {
 
     private fun renderStatus() {
         val service = PhoneAgentAccessibilityService.instance
+        val hasKey = SecureStore(this).get().isNotBlank()
         val label = when {
-            service == null -> "Accessibility off"
-            service.isWorking() -> "Working…"
-            service.hasPendingConfirmation() -> "Waiting"
-            service.hasGroqKey() -> "Ready"
-            else -> "Basic mode"
+            service == null && !hasKey -> "Accessibility off"
+            service?.isWorking() == true -> "Working…"
+            service?.hasPendingConfirmation() == true -> "Waiting"
+            hasKey && service != null -> "Ready"
+            hasKey -> "Key saved"
+            else -> "Accessibility off"
         }
         statusText.text = label
         val dotColor = when {
-            service == null -> Color.rgb(255, 130, 130)
-            service.isWorking() -> Color.rgb(255, 210, 130)
-            else -> Color.rgb(142, 230, 174)
+            service?.isWorking() == true -> Color.rgb(255, 210, 130)
+            hasKey -> Color.rgb(142, 230, 174)
+            else -> Color.rgb(255, 130, 130)
         }
         statusDot.background = roundGradient(dotColor, dotColor, 999)
     }
