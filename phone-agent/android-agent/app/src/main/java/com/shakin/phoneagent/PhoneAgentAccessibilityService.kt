@@ -475,11 +475,12 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             val root = rootInActiveWindow
-            if (root != null && root.childCount >= 0) {
-                Thread.sleep(350)
+            val pkg = root?.packageName?.toString().orEmpty()
+            if (root != null && pkg.isNotBlank() && pkg != packageName) {
+                Thread.sleep(650)
                 return
             }
-            Thread.sleep(250)
+            Thread.sleep(300)
         }
     }
 
