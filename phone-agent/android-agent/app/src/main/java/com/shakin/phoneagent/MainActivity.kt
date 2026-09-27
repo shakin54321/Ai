@@ -22,7 +22,7 @@ class MainActivity : Activity() {
             setPadding(32,48,32,32)
         }
         val title = TextView(this).apply { textSize=22f; text="Shakin Agent" }
-        tokenView = TextView(this).apply { textSize=14f; textIsSelectable=true }
+        tokenView = TextView(this).apply { textSize=14f; isTextSelectable=true }
         groqView = EditText(this).apply { hint="Optional Groq API key for natural-language planning"; inputType=129 }
         val openSettings = Button(this).apply {
             text="Enable Accessibility"
