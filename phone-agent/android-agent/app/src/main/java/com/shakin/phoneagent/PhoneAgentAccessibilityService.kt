@@ -36,7 +36,12 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         instance = this
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    @Volatile private var lastPackageName: String = ""
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        event?.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { lastPackageName = it }
+    }
+
     override fun onInterrupt() {}
 
     override fun onDestroy() {
@@ -263,15 +268,25 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 callbackOnMain(progressCallback, actionProgress(action))
 
                 when (action.type) {
-                    "open_app", "open_app_background" -> launchByLabel(action.arg)
+                    "open_app" -> {
+                        launchByLabel(action.arg)
+                        waitForWindowReady()
+                    }
+
+                    "open_app_background" -> {
+                        throw IllegalStateException(
+                            "True background control is not available for this app because " +
+                                "Android requires the target app's visible UI for Accessibility automation."
+                        )
+                    }
 
                     "tap_text" -> check(
-                        tapText(action.arg),
+                        tapTextRetry(action.arg),
                         "I could not find the visible control: " + action.arg
                     )
 
                     "tap_description" -> check(
-                        tapDescription(action.arg),
+                        tapDescriptionRetry(action.arg),
                         "I could not find that control."
                     )
 
@@ -399,10 +414,10 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         }
 
     private fun postBatchDelay(plan: Planner.Plan): Long =
-        if (plan.actions.any { it.type == "open_app" || it.type == "open_app_background" || it.type == "open_url" }) {
-            850L
+        if (plan.actions.any { it.type == "open_app" || it.type == "open_url" }) {
+            1200L
         } else {
-            350L
+            500L
         }
 
     private fun launchByLabel(label: String) {
@@ -456,6 +471,18 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         throw IllegalArgumentException("App not found: " + label)
     }
 
+    private fun waitForWindowReady(timeoutMs: Long = 5000L) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val root = rootInActiveWindow
+            if (root != null && root.childCount >= 0) {
+                Thread.sleep(350)
+                return
+            }
+            Thread.sleep(250)
+        }
+    }
+
     private fun packageFallback(target: String): String? = when {
         target == "youtube" || target == "yt" -> "com.google.android.youtube"
         target == "whatsapp" -> "com.whatsapp"
@@ -472,17 +499,74 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             .replace(Regex("[^a-z0-9]+"), " ")
             .trim()
 
+    private fun tapTextRetry(target: String): Boolean {
+        repeat(4) {
+            if (tapText(target)) return true
+            Thread.sleep(550)
+        }
+        return false
+    }
+
+    private fun tapDescriptionRetry(target: String): Boolean {
+        repeat(4) {
+            if (tapDescription(target)) return true
+            Thread.sleep(550)
+        }
+        return false
+    }
+
     private fun tapText(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
-        val node = findNode(root, target, false) ?: return false
+        val node = findNodeSmart(root, target) ?: return false
         return clickNode(node)
     }
 
     private fun tapDescription(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
-        val node = findNode(root, target, true) ?: return false
+        val node = findNode(root, target, true) ?: findNodeSmart(root, target)
+            ?: return false
         return clickNode(node)
     }
+
+    private fun findNodeSmart(
+        root: AccessibilityNodeInfo,
+        target: String
+    ): AccessibilityNodeInfo? {
+        val exact = findNode(root, target, false)
+        if (exact != null) return exact
+
+        val normalizedTarget = normalizeUiText(target)
+
+        fun walk(node: AccessibilityNodeInfo, depth: Int): AccessibilityNodeInfo? {
+            if (depth > 18) return null
+
+            val values = listOfNotNull(
+                node.text?.toString(),
+                node.contentDescription?.toString(),
+                node.hintText?.toString()
+            )
+
+            val normalizedValues = values.map { normalizeUiText(it) }
+
+            if (normalizedValues.any { it == normalizedTarget || it.contains(normalizedTarget) || normalizedTarget.contains(it) && it.length >= 3 }) {
+                return node
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                val found = walk(child, depth + 1)
+                if (found != null) return found
+            }
+            return null
+        }
+
+        return walk(root, 0)
+    }
+
+    private fun normalizeUiText(value: String): String =
+        value.lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
 
     private fun longPressText(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
