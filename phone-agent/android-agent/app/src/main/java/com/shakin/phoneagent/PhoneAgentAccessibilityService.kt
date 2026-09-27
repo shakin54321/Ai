@@ -133,6 +133,10 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
             return error("Groq API key is not saved. Open Settings and tap Save & Test.")
         }
 
+        val backgroundRequested = Regex(
+            "(?i)\\b(background|in background|behind the scenes|ব্যাকগ্রাউন্ড|পেছনে)\\b"
+        ).containsMatchIn(command)
+
         var lastMessage = "Working…"
 
         repeat(24) {
@@ -154,6 +158,19 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 pending = plan
                 callbackOnMain(progressCallback, "Confirmation required.")
                 return confirmation(lastMessage.ifBlank { "Please confirm this action." })
+            }
+
+            if (backgroundRequested && plan.actions.any { action ->
+                    action.type in setOf(
+                        "open_app", "open_app_background", "tap_text", "tap_description",
+                        "tap_coordinates", "long_press_text", "type_text", "clear_text",
+                        "swipe", "scroll", "open_url"
+                    )
+                }) {
+                return error(
+                    "This background task needs the target app's visible UI. " +
+                        "I did not bring the app to the foreground because you asked for background mode."
+                )
             }
 
             val result = execute(plan, progressCallback)
