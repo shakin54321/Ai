@@ -233,7 +233,7 @@ class MainActivity : Activity() {
             setHintTextColor(muted)
             hint = "Paste Groq API key"
             textSize = 13f
-            singleLine = true
+            isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
             background = strokeRounded(pinkSofter, border, 17)
             setPadding(dp(12), 0, dp(12), 0)
