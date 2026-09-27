@@ -147,6 +147,16 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                     "open_app" -> launchByLabel(action.arg)
                     "tap_text" -> check(tapText(action.arg), "Could not find '\${action.arg}'.")
                     "type_text" -> check(typeFocused(action.arg), "No focused text field.")
+                    "tap_description" -> check(tapDescription(action.arg), "Could not find the requested control.")
+                    "tap_coordinates" -> {
+                        val parts = action.arg.split(",")
+                        check(parts.size == 2, "Tap coordinates must be x,y.")
+                        tapCoordinates(parts[0].trim().toInt(), parts[1].trim().toInt())
+                    }
+                    "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+                    "swipe" -> swipe(action.arg)
+                    "scroll" -> swipe(if (action.arg.equals("backward", true)) "down" else "up")
+                    "wait" -> Thread.sleep(action.ms.coerceIn(50L, 5000L))
                     "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
                     "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
                     "swipe_up" -> swipe(true)
@@ -179,6 +189,66 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         val launchIntent = pm.getLaunchIntentForPackage(app.packageName)
             ?: throw IllegalArgumentException("App cannot be opened: $label")
         startActivity(launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    private fun tapDescription(target: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val node = find(root, target.lowercase(), true) ?: return false
+        return clickNode(node)
+    }
+
+    private fun tapCoordinates(x: Int, y: Int) {
+        val dm = resources.displayMetrics
+        require(x in 0 until dm.widthPixels && y in 0 until dm.heightPixels) {
+            "Tap coordinate is outside the screen."
+        }
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        check(
+            dispatchGesture(
+                GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 90))
+                    .build(),
+                null,
+                main
+            )
+        ) { "Gesture could not be dispatched." }
+        Thread.sleep(220)
+    }
+
+    private fun swipe(direction: String) {
+        val dm = resources.displayMetrics
+        val x = dm.widthPixels / 2f
+        val startY = if (direction.equals("up", true)) dm.heightPixels * .76f else dm.heightPixels * .24f
+        val endY = if (direction.equals("up", true)) dm.heightPixels * .24f else dm.heightPixels * .76f
+        val path = Path().apply {
+            moveTo(x, startY)
+            lineTo(x, endY)
+        }
+        check(
+            dispatchGesture(
+                GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 420))
+                    .build(),
+                null,
+                main
+            )
+        ) { "Swipe could not be dispatched." }
+        Thread.sleep(500)
+    }
+
+    private fun find(node: AccessibilityNodeInfo, target: String, description: Boolean): AccessibilityNodeInfo? {
+        val value = if (description) {
+            node.contentDescription?.toString().orEmpty()
+        } else {
+            node.text?.toString().orEmpty()
+        }
+        if (value.lowercase().contains(target)) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = find(child, target, description)
+            if (found != null) return found
+        }
+        return null
     }
 
     private fun tapText(target: String): Boolean {
