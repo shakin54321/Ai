@@ -34,6 +34,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        runCatching { AgentRuntimeService.start(this) }
     }
 
     @Volatile private var lastPackageName: String = ""
@@ -140,7 +141,7 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
         var lastMessage = "Working…"
         var recoveryNote = ""
 
-        repeat(24) {
+        repeat(40) {
             callbackOnMain(progressCallback, "Reading the current screen…")
 
             val planningCommand = if (recoveryNote.isBlank()) {
@@ -149,7 +150,8 @@ class PhoneAgentAccessibilityService : AccessibilityService() {
                 command + "\n\nPrevious attempt failed. Treat this as live evidence and choose a different visible path:\n" + recoveryNote
             }
 
-            val plan = Planner.next(planningCommand, snapshot(), launcherApps(), apiKey)
+            val currentSnapshot = snapshot()
+            val plan = Planner.next(planningCommand, currentSnapshot, launcherApps(), apiKey)
             lastMessage = plan.message
 
             if (plan.actions.isEmpty() || plan.done) {
